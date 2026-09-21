@@ -1,12 +1,16 @@
 /.venv
 .idea
 __pycache__/
-
+.claude/
 
 # secrets
 .env
 
+# folders
+data/
+logs/
 
-data
 
-multi-source-job-aggregator-repo-kb.md
+# files
+small-cities-near-mannheim.txt
+CLAUDE.md 
