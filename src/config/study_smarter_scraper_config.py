@@ -29,4 +29,21 @@ sss_config = {
         #"Stuttgart": 20,
     },
     "job_age": 30, # Allowed values: 1, 7, 30. Weekly cadence: 7. Catch-up after a pause: 30
+
+    # Selectors (both stages). Extraction logic stays in study_smarter_scraper.py; only the strings live here.
+    "cookie_button": None, # no cookie banner handling; set a selector to have stage 2 click it
+    "search_page": {
+        "results_container": "div[class*='results__jobs']",
+        "cards_container": "div[class='c-job-cards']", # not visible = no results
+        "cards": "div[class='c-job-card ']", # trailing space is real
+        "title": "div[class*='c-job-card'] h4[class*='c-job-card__title']",
+        "card_link": "a",
+    },
+    "detail_page": {
+        "wait_for": "main",
+        "description": ["[class*='job-description']", "[class*='c-job-detail']", "main"], # guesses; 'main' is the noisy last resort
+        "company": ["[class*='c-job-detail__company']"],
+        "location": ["[class*='c-job-detail__location']"],
+        "expired_signatures": ["nicht mehr verfügbar", "no longer available", "page not found", "seite nicht gefunden", "ist abgelaufen"],
+    },
 }

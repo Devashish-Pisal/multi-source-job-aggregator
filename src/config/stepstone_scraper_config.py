@@ -29,4 +29,20 @@ stepstone_scraper_config = {
         #"Stuttgart": 20,
     },
     "job_age": 7, # Allowed values: 1, 7 (site maximum). Weekly cadence: 7
+
+    # Selectors (both stages). Extraction logic stays in stepstone_scraper.py; only the strings live here.
+    "cookie_button": "button[id='ccmgt_explicit_accept']", # not verified yet; stage 2 clicks it if visible, stage 1 still has its TODO; None disables
+    "search_page": {
+        "results_container": "div[class*='res-'][data-genesis-element='BASE']",
+        "hit_counter": "[data-resultlist-offers-numbers]",
+        "hit_counter_attribute": "data-resultlist-offers-main-displayed", # number of real hits on page 1 (excludes recommendations)
+        "links": "a[href*='/stellenangebote']",
+    },
+    "detail_page": {
+        "wait_for": "[data-at='job-ad-content']",
+        "description": ["[data-at='job-ad-content']"],
+        "company": ["[data-at='header-company-name']"],
+        "location": ["[data-at='metadata-location']"],
+        "expired_signatures": ["nicht mehr verfügbar", "nicht mehr aktiv", "ist abgelaufen", "no longer available", "wurde deaktiviert"],
+    },
 }

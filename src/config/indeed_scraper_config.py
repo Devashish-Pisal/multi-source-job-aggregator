@@ -31,4 +31,20 @@ indeed_scraper_config = {
         #"Stuttgart, Baden-Württemberg": 25,
     },
     "job_age": 14, # Allowed values: 1, 3, 7, 14 (30 is not offered). Weekly cadence: 7. Catch-up after a pause: 14
+
+    # Selectors (both stages). Extraction logic stays in indeed_scraper.py; only the strings live here.
+    "cookie_button": "button[id='onetrust-reject-all-handler']", # reject-all button
+    "search_page": {
+        "results_container": "div[class*='jobsearch-LeftPane']",
+        "no_results": "div[class*='jobsearch-NoResult-messageContainer']",
+        "cards": "#mosaic-jobResults #mosaic-provider-jobcards ul > li[class*='css']  a[id*='job']", # > div[class*='vjs-highlight']
+        "title_fallback": "h2[class*='jobTitle']", # only used when the href carries no ti= parameter
+    },
+    "detail_page": {
+        "wait_for": "#jobDescriptionText", # JSON-LD script is always waited for as well
+        "description": ["#jobDescriptionText"], # fallback lists: first selector with text wins
+        "company": ["[data-testid='inlineHeader-companyName']", "[data-company-name='true']"],
+        "location": ["[data-testid='inlineHeader-companyLocation']", "[data-testid='job-location']"],
+        "expired_signatures": ["stellenanzeige ist abgelaufen", "job has expired", "nicht mehr verfügbar", "no longer available"], # lowercase phrases, matched against title + first 5 kB of text
+    },
 }

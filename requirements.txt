@@ -2,11 +2,13 @@
 # Playwright drives the Google Chrome already installed on the machine (channel="chrome"),
 # so no `playwright install` step is needed.
 
-# Browser scraping pipeline (src/main.py)
+# Browser scraping pipeline (src/main.py): stage 1 title search, stage 2 description scraping + LLM résumé judge
 loguru==0.7.3
 numpy==2.5.3
+openai==3.16.2 # client for any OpenAI-compatible chat-completions endpoint (OpenRouter, Groq, OpenAI, Anthropic, ...)
 pandas==3.0.6
 playwright==1.63.0
+python-dotenv==1.2.3
 sentence-transformers==6.1.0
 
 # REST API pipeline (src/sources/adzuna.py, arbeitsamt.py, findwork.py, arbeitnow.py) -- currently inactive
@@ -14,5 +16,4 @@ beautifulsoup4==4.15.0
 clean-text==0.7.1
 pydantic==2.13.5
 python-box==7.4.1
-python-dotenv==1.2.3
 requests==2.34.2

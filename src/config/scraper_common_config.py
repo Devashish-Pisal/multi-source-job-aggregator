@@ -7,6 +7,10 @@ scraper_common_config = {
     "use_xing_scraper": False,
     "use_study_smarter_scraper": False,
 
+    # Pipeline stages: 1 = title search (browser scrapers), 2 = description scraping + LLM résumé judge (knobs in stage2_config.py)
+    "run_stage_1": True,
+    "run_stage_2": True,
+
     "browser_profile_path": Path("E:\\(_Coding_Data_)\\Selenium_Chrome_Profiles\\job_listing_data_scrapping_profile"), # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
     "embedding_match_config": {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives

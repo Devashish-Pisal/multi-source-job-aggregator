@@ -29,4 +29,19 @@ xing_scraper_config = {
         #"Stuttgart": 20,
     },
     "job_age": "LAST_MONTH", # Allowed values: LAST_24_HOURS, LAST_WEEK, LAST_MONTH. Weekly cadence: LAST_WEEK. Catch-up after a pause: LAST_MONTH
+
+    # Selectors (both stages). Extraction logic stays in xing_scraper.py; only the strings live here.
+    "cookie_button": "button[data-action-type='accept'][id='accept']", # accept button
+    "search_page": {
+        "results_container": "div[class*='container__Container']",
+        "cards": "div[class*='container__Container'] > div > ol[class*='results-styles'] > li > article[data-xds='Card']",
+        "card_link": "a", # the card's click overlay; title comes from its aria-label
+    },
+    "detail_page": {
+        "wait_for": "main",
+        "description": ["[data-testid='job-description']", "main"], # guesses; 'main' is the noisy last resort
+        "company": ["[data-testid='job-company-name']"],
+        "location": ["[data-testid='job-location']"],
+        "expired_signatures": ["nicht mehr verfügbar", "nicht mehr online", "ist abgelaufen", "no longer available", "wurde deaktiviert"],
+    },
 }

@@ -31,6 +31,16 @@ def delay_between_sources(config: dict) -> None:
     random_delay(cfg["min_seconds"], cfg["max_seconds"], "between sources")
 
 
+def delay_between_detail_pages(config: dict) -> None:
+    cfg = config["throttle"]["between_detail_pages"]
+    random_delay(cfg["min_seconds"], cfg["max_seconds"], "between detail pages")
+
+
+def delay_between_llm_calls(config: dict) -> None:
+    cfg = config["llm"]["delay_between_calls"]
+    random_delay(cfg["min_seconds"], cfg["max_seconds"], "between LLM calls")
+
+
 def random_scroll(page, config: dict) -> None:
     cfg = config["throttle_config"]["scroll"]
     steps = random.randint(cfg["min_steps"], cfg["max_steps"])
