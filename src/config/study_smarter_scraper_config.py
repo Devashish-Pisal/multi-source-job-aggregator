@@ -5,13 +5,27 @@ sss_config = {
         # Allowed radius lengths for study smarter are : 1, 10, 20, 30, 40, 50
         "Mannheim": 40,
         "Heidelberg": 30,
-        # "Ludwigshafen": 30,
-        #"Walldorf": 20,
+        "Ludwigshafen": 30,
+        "Walldorf": 20,
         #"Karlsruhe": 20,
         #"Kaiserslautern": 20,
         #"Darmstadt": 20,
         #"Frankfurt am Main": 20,
         #"Stuttgart": 20,
+
+        # Small cities near Mannheim
+        "Worms": 10,
+        "Frankenthal (Pfalz)": 10,
+        # "Maxdorf": 10,
+        # "Limburgerhof": 10,
+        # "Schifferstadt": 10,
+        "Speyer": 10,
+        # "Hockenheim": 10,
+        # "Rheinau": 10,
+        # "Schwetzingen": 10,
+        # "Sandhausen": 10,
+        # "Viernheim": 10,
+        "Weinheim": 10,
     },
-    "job_age": 7, # Allowed number of days old job for study smarter is (1, 7, 30)
+    "job_age": 30, # Allowed number of days old job for study smarter is (1, 7, 30)
 }

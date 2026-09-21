@@ -9,8 +9,7 @@ __pycache__/
 # folders
 data/
 logs/
-
+docs/
 
 # files
-small-cities-near-mannheim.txt
 CLAUDE.md 

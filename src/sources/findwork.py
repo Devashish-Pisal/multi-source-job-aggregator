@@ -7,7 +7,7 @@ from pprint import pprint
 from loguru import logger
 from time import sleep
 from dotenv import load_dotenv
-from path_config import RAW_FOLDER_PATH, PROCESSED_FOLDER_PATH, DUPLICATES_FOLDER_PATH
+from config.path_config import RAW_FOLDER_PATH, PROCESSED_FOLDER_PATH, DUPLICATES_FOLDER_PATH
 from src.utils.util import generate_deduplication_key
 from bs4 import BeautifulSoup
 from cleantext import clean

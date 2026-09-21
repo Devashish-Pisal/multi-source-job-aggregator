@@ -6,7 +6,7 @@ import pandas as pd
 from box import Box
 from pprint import pprint
 from loguru import logger
-from path_config import RAW_FOLDER_PATH, PROCESSED_FOLDER_PATH, DUPLICATES_FOLDER_PATH
+from config.path_config import RAW_FOLDER_PATH, PROCESSED_FOLDER_PATH, DUPLICATES_FOLDER_PATH
 from src.utils.util import generate_deduplication_key
 
 

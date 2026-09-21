@@ -1,12 +1,17 @@
-from config.study_smarter_scraper_config import sss_config
-from pprint import pprint
-from playwright.sync_api import sync_playwright
-import time
 from loguru import logger
-import sys
-from config.scraper_common_config import scraper_common_config
-from src.utils.util import compute_embedding, compute_cosine_similarity, get_emb_match_job_dict
+from playwright.sync_api import sync_playwright
 
+from config.study_smarter_scraper_config import sss_config
+from config.scraper_common_config import scraper_common_config
+from src.utils.util import (
+    compute_embedding,
+    get_emb_match_job_dict,
+    find_best_matching_keyword,
+    is_employment_level_compatible,
+    load_embedding_model_and_keyword_embeddings,
+)
+from src.utils.browser_session import BrowserSession, query_error_boundary
+from src.utils.throttle import delay_after_page_load, delay_between_queries, random_scroll
 
 
 class StudySmarterScraper:
@@ -14,21 +19,21 @@ class StudySmarterScraper:
         self.embedding_model = embedding_model
         self.keywords_embeddings = keyword_embeddings
         self.query_urls = None
-        self.query_matched_emb_accepted_jobs = None
-        self.query_matched_emb_rejected_jobs = None
+        self.query_matched_emb_accepted_jobs = []
+        self.query_matched_emb_rejected_jobs = []
         self.all_query_matched_jobs = None  # scrape job descriptions and construct list of JOB objects
         self.matching_jobs = None  # Resume matching jobs in embedding space --> save these jobs into db immediately
         self.db_saved_jobs = None  # Successfully saved jobs to the DB
 
 
-
     def run_scraper(self):
-        # TODO: Surround following block with if to disable scraper
-        self.query_urls = self.build_query_urls()
-        logger.info(f"[Studysmarter Scraper] Studysmarter scraper built {len(self.query_urls)} query combinations")
-        self.query_matched_emb_accepted_jobs, self.query_matched_emb_rejected_jobs = self.extract_job_urls(self.query_urls)
-        logger.info(f"[Studysmarter Scraper] Studysmarter found total {len(self.query_matched_emb_accepted_jobs)} query matching accepted job urls and {len(self.query_matched_emb_rejected_jobs)} query matching rejected urls.")
-
+        if scraper_common_config["use_study_smarter_scraper"]:
+            self.query_urls = self.build_query_urls()
+            logger.info(f"[Studysmarter Scraper] Studysmarter scraper built {len(self.query_urls)} query combinations")
+            self.query_matched_emb_accepted_jobs, self.query_matched_emb_rejected_jobs = self.extract_job_urls(self.query_urls)
+            logger.info(f"[Studysmarter Scraper] Studysmarter found total {len(self.query_matched_emb_accepted_jobs)} query matching accepted job urls and {len(self.query_matched_emb_rejected_jobs)} query matching rejected urls.")
+        else:
+            logger.warning(f"[Studysmarter Scraper] Studysmarter scraper is disabled in common config!")
 
 
     @staticmethod
@@ -57,46 +62,52 @@ class StudySmarterScraper:
         rejected_job_urls = set()
         accepted_jobs = []
         rejected_jobs = []
+        threshold = scraper_common_config["embedding_match_config"]["threshold"]
+        search_keywords = scraper_common_config["search_keywords"]
+
         with sync_playwright() as p:
-            browser = p.chromium.launch(
+            with BrowserSession(
+                p,
+                "Studysmarter Scraper",
+                user_data_dir=scraper_common_config["browser_profile_path"],
                 headless=sss_config["use_headless_mode"], # Headless scraping is possible on study smarter platform
-            )
-            page = browser.new_page()
-            try:
+            ) as session:
+                page = session.new_page()
                 for url in query_url_list:
-                    page.goto(url, wait_until="domcontentloaded")
-                    page.wait_for_selector("div[class*='results__jobs']")
-                    card_visible = page.locator("div[class='c-job-cards']").is_visible()
-                    if not card_visible:
-                        logger.info(f"[Studysmarter Scraper] No matching job posting results found for query {url}")
-                        continue
-                    cards = page.locator("div[class='c-job-card ']")
-                    for i in range(cards.count()):
-                        card = cards.nth(i)
-                        title = card.locator("div[class*='c-job-card'] h4[class*='c-job-card__title']").inner_text()
-                        href = card.locator("a").get_attribute("href")
-                        threshold = scraper_common_config["embedding_match_config"]["threshold"]
-                        if title and href:
-                            job_title_emb = compute_embedding(self.embedding_model, title)
-                            max_sim = -sys.float_info.max
-                            for query_emb in self.keywords_embeddings:
-                                current_sim = compute_cosine_similarity(query_emb, job_title_emb)
-                                if current_sim > max_sim:
-                                    max_sim = current_sim
-                            job = get_emb_match_job_dict(title, url, round(max_sim, 4), "study_smarter")
-                            if max_sim >= threshold and href not in accepted_job_urls:
-                                accepted_job_urls.add(href)
-                                accepted_jobs.append(job)
-                            elif href not in rejected_job_urls:
-                                rejected_job_urls.add(href)
-                                rejected_jobs.append(job)
-                                logger.warning(f"Rejecting {title} because max similarity score is {max_sim} | URL {href} | Threshold {scraper_common_config["embedding_match_config"]["threshold"]}")
-                browser.close()
-            except Exception as e:
-                logger.warning(f"[Studysmarter Scrapper] Caught exception {e} for url {url}")
+                    with query_error_boundary("Studysmarter Scraper", url):
+                        page.goto(url, wait_until="domcontentloaded")
+                        delay_after_page_load(scraper_common_config)
+                        page.wait_for_selector("div[class*='results__jobs']", timeout=15000) # fail fast (e.g. on a block page) instead of the 30s default
+                        random_scroll(page, scraper_common_config)
+                        card_visible = page.locator("div[class='c-job-cards']").is_visible()
+                        if not card_visible:
+                            logger.info(f"[Studysmarter Scraper] No matching job posting results found for query {url}")
+                        else:
+                            cards = page.locator("div[class='c-job-card ']")
+                            for i in range(cards.count()):
+                                card = cards.nth(i)
+                                title = card.locator("div[class*='c-job-card'] h4[class*='c-job-card__title']").inner_text()
+                                href = card.locator("a").get_attribute("href")
+                                if title and href:
+                                    job_title_emb = compute_embedding(self.embedding_model, title)
+                                    best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
+                                    max_sim = round(max_sim, 4)
+                                    best_matching_keyword = search_keywords[best_index]
+                                    level_compatible = is_employment_level_compatible(best_matching_keyword, title)
+                                    if max_sim >= threshold and level_compatible:
+                                        if href not in accepted_job_urls:
+                                            accepted_job_urls.add(href)
+                                            accepted_jobs.append(get_emb_match_job_dict(title, href, max_sim, "study_smarter"))
+                                    elif href not in rejected_job_urls:
+                                        rejected_job_urls.add(href)
+                                        reason = "employment_level_mismatch" if not level_compatible else "below_threshold"
+                                        rejected_jobs.append(get_emb_match_job_dict(title, href, max_sim, "study_smarter", rejection_reason=reason))
+                                        logger.warning(f"[Studysmarter Scraper] Rejecting '{title}' ({reason}) | score={max_sim} | matched keyword='{best_matching_keyword}' | URL={href}")
+                    delay_between_queries(scraper_common_config)
         return accepted_jobs, rejected_jobs
 
 
 if __name__=="__main__":
-    ss_scraper = StudySmarterScraper()
+    embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
+    ss_scraper = StudySmarterScraper(embedding_model, keyword_embeddings)
     ss_scraper.run_scraper()
