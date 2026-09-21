@@ -27,8 +27,6 @@ config =  {
         """
     ],
     "output_filename": "jobs.csv",              # Currently only .csv output file formate is supported
-    "keywords_job_title_must_include": [],      # Job title will always include at least one keyword from the list (OR operation)
-    "keywords_job_title_must_exclude": [],      # Job title will never include any keyword from the list (AND operation)
     
 
 

@@ -3,10 +3,10 @@ import requests
 from loguru import logger
 
 from config.common_config import config
-from src.sources.arbeitsamt import Arbeitsamt
-from src.sources.adzuna import Adzuna
-from src.utils.validate_config import ValidateConfig
-from src.sources.findwork import FindWork
+from sources.arbeitsamt import Arbeitsamt
+from sources.adzuna import Adzuna
+from utils.validate_config import ValidateConfig
+from sources.findwork import FindWork
 """
 ARBEITSAMT_BASE_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs"
 HEADERS = {

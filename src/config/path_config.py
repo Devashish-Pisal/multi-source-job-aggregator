@@ -2,8 +2,9 @@ from pathlib import Path
 
 
 
-PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_FOLDER_PATH = PROJECT_ROOT / "config"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_FOLDER_PATH = PROJECT_ROOT / "src"
+CONFIG_FOLDER_PATH = SRC_FOLDER_PATH / "config"
 
 # Folders
 DATA_FOLDER_PATH = PROJECT_ROOT / "data"

@@ -1,17 +1,19 @@
+import random
+from pathlib import Path
+
 from loguru import logger
 from playwright.sync_api import sync_playwright
 
 from config.xing_scraper_config import xing_scraper_config
 from config.scraper_common_config import scraper_common_config
-from src.utils.util import (
+from utils.util import (
     compute_embedding,
     get_emb_match_job_dict,
     find_best_matching_keyword,
-    is_employment_level_compatible,
     load_embedding_model_and_keyword_embeddings,
+    detect_block_page,
 )
-from src.utils.browser_session import BrowserSession, query_error_boundary
-from src.utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, random_scroll
+from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, random_scroll
 
 
 class XingScraper:
@@ -53,6 +55,7 @@ class XingScraper:
                     job_age=job_age,
                 )
                 urls.append(url)
+        random.shuffle(urls)
         return urls
 
 
@@ -62,25 +65,37 @@ class XingScraper:
         accepted_jobs = []
         rejected_jobs = []
         threshold = scraper_common_config["embedding_match_config"]["threshold"]
-        search_keywords = scraper_common_config["search_keywords"]
+        match_keywords = scraper_common_config["match_keywords"]
 
+        profile_path = Path(scraper_common_config["browser_profile_path"])
+        profile_path.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as p:
-            with BrowserSession(
-                p,
-                "Xing Scraper",
-                user_data_dir=scraper_common_config["browser_profile_path"],
+            logger.info(f"[Xing Scraper] Starting browser session (profile: {profile_path})")
+            context = p.chromium.launch_persistent_context(
+                str(profile_path),
                 headless=xing_scraper_config["use_headless_mode"], # Headless scraping is not allowed on xing
-            ) as session:
-                page = session.new_page()
-                for url in query_url_list:
-                    with query_error_boundary("Xing Scraper", url):
-                        page.goto(url)
+                channel="chrome",
+                locale="de-DE",
+                timezone_id="Europe/Berlin",
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
+            try:
+                page = context.new_page()
+                page.set_default_timeout(15000)
+                page.on("pageerror", lambda exc: logger.error(f"[Xing Scraper] [Page Error] {exc}"))
+                page.on("requestfailed", lambda req: logger.warning(f"[Xing Scraper] [Request Failed] {req.method} {req.url}"))
+                max_failures = scraper_common_config["circuit_breaker"]["max_consecutive_failures"]
+                consecutive_failures = 0
+                for index, url in enumerate(query_url_list):
+                    try:
+                        page.goto(url, wait_until="domcontentloaded")
                         delay_after_page_load(scraper_common_config)
                         accept_cookies = page.locator("button[data-action-type='accept'][id='accept']")
                         if accept_cookies.is_visible():
                             delay_between_interactions(scraper_common_config)
                             accept_cookies.click() # accept cookies
-                        page.wait_for_selector("div[class*='container__Container']", timeout=15000) # fail fast (e.g. on a block page) instead of the 30s default
+                        page.wait_for_selector("div[class*='container__Container']", timeout=15000)
                         random_scroll(page, scraper_common_config)
                         cards = page.locator("div[class*='container__Container'] > div > ol[class*='results-styles'] > li > article[data-xds='Card']")
                         card_count = cards.count()
@@ -97,38 +112,42 @@ class XingScraper:
                                         job_title_emb = compute_embedding(self.embedding_model, title)
                                         best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
                                         max_sim = round(max_sim, 4)
-                                        best_matching_keyword = search_keywords[best_index]
-                                        level_compatible = is_employment_level_compatible(best_matching_keyword, title)
-                                        if max_sim >= threshold and level_compatible:
+                                        best_matching_keyword = match_keywords[best_index]
+                                        if max_sim >= threshold:
                                             if full_url not in accepted_job_urls:
                                                 accepted_job_urls.add(full_url)
                                                 accepted_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, "xing"))
                                         elif full_url not in rejected_job_urls:
                                             rejected_job_urls.add(full_url)
-                                            reason = "employment_level_mismatch" if not level_compatible else "below_threshold"
-                                            rejected_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, "xing", rejection_reason=reason))
-                                            logger.warning(f"[Xing Scraper] Rejecting '{title}' ({reason}) | score={max_sim} | matched keyword='{best_matching_keyword}' | URL={full_url}")
+                                            rejected_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, "xing", rejection_reason="below_threshold"))
+                                            logger.warning(f"[Xing Scraper] Rejecting '{title}' (below_threshold) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
                                     elif full_url not in accepted_job_urls and full_url not in rejected_job_urls:
-                                        # Fail-soft: couldn't extract a title (selector drift on Xing's side) --
-                                        # keep the URL so coverage doesn't regress, but it can't be scored/ranked.
                                         logger.warning(f"[Xing Scraper] Could not extract a title for {full_url} -- keeping URL without a relevance score.")
                                         rejected_job_urls.add(full_url)
                                         rejected_jobs.append(get_emb_match_job_dict(None, full_url, None, "xing", rejection_reason="title_extraction_failed"))
+                        consecutive_failures = 0
+                    except Exception as exc:
+                        consecutive_failures += 1
+                        error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+                        block_reason = detect_block_page(page)
+                        logger.warning(f"[Xing Scraper] Query failed ({consecutive_failures}/{max_failures} consecutive): {error} | URL: {url}")
+                        if block_reason or consecutive_failures >= max_failures:
+                            remaining = len(query_url_list) - index - 1
+                            why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} queries failed in a row with no block page detected, last error: {error}"
+                            logger.error(f"[Xing Scraper] Circuit breaker tripped -- {why}. Aborting this scraper with {remaining} of {len(query_url_list)} queries unvisited so a blocking site is not hammered further; {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs collected so far are kept. Current page URL: {page.url}")
+                            break
                     delay_between_queries(scraper_common_config)
+                else:
+                    logger.info(f"[Xing Scraper] Browser session completed successfully, all {len(query_url_list)} queries visited.")
+            finally:
+                self.query_matched_emb_accepted_jobs = accepted_jobs
+                self.query_matched_emb_rejected_jobs = rejected_jobs
+                context.close()
         return accepted_jobs, rejected_jobs
 
 
     @staticmethod
     def extract_title(card_anchor) -> str | None:
-        """
-        The card's anchor is a transparent click-overlay with no visible text
-        (confirmed by inspecting the live DOM) -- its title lives in the
-        `aria-label` attribute instead (e.g. "Werkstudent im Bereich Cloud &
-        Modern Infrastructure..."), which as an accessibility/semantic
-        attribute is also more stable than Xing's auto-generated CSS classes.
-        inner_text() is kept as a fallback in case aria-label is ever absent,
-        so a layout change degrades gracefully instead of losing the title.
-        """
         try:
             label = card_anchor.get_attribute("aria-label")
             if label and label.strip():

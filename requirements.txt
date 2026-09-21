@@ -1,11 +1,18 @@
-pandas
-numpy
-loguru
-python-dotenv
-python-box
-requests
-pydantic
-bs4
-clean-text
-sentence_transformers
-playwright
+# Pinned to the versions the project was last verified with (Python 3.12+).
+# Playwright drives the Google Chrome already installed on the machine (channel="chrome"),
+# so no `playwright install` step is needed.
+
+# Browser scraping pipeline (src/main.py)
+loguru==0.7.3
+numpy==2.5.3
+pandas==3.0.6
+playwright==1.63.0
+sentence-transformers==6.1.0
+
+# REST API pipeline (src/sources/adzuna.py, arbeitsamt.py, findwork.py, arbeitnow.py) -- currently inactive
+beautifulsoup4==4.15.0
+clean-text==0.7.1
+pydantic==2.13.5
+python-box==7.4.1
+python-dotenv==1.2.3
+requests==2.34.2

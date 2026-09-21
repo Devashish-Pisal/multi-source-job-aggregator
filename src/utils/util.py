@@ -15,7 +15,10 @@ NOISE_WORDS = [
     "werkstudent",
     "working student",
     "praktikum",
+    "praktikant",
+    "praktikantin",
     "intern",
+    "internship",
     "hiwi",
     "student",
     "studentenjob",
@@ -27,6 +30,9 @@ NOISE_WORDS = [
     "m/f/d",
     "f/m/x",
     "m/w/x",
+    "w/m/x",
+    "m/f/x",
+    "f/m/d",
     "all genders",
     "gn",
     # contract / meta
@@ -47,73 +53,58 @@ NOISE_WORDS = [
 ]
 
 
+NOISE_WORDS_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in sorted(NOISE_WORDS, key=len, reverse=True)) + r")\b"
+)
+GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]in(?:nen)?\b")  # praktikant/in, werkstudent:in, entwickler*innen
+
+
 def clean_search_keywords_and_job_title(text: str) -> str:
-    text = text.lower()
-    for w in NOISE_WORDS:
-        text = text.replace(w, " ")
-    # remove special characters like (m/w/d)
-    text = re.sub(r"\(.*?m.*?w.*?d.*?\)", " ", text)
-    # remove leftover brackets and symbols
-    text = re.sub(r"[\(\)\|\-_/,:;]", " ", text)
-    # normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    text = GENDER_SUFFIX_PATTERN.sub("", text.lower())
+    text = NOISE_WORDS_PATTERN.sub(" ", text)
+    text = re.sub(r"[\(\)\[\]\|\-_/,:;]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
-STUDENT_LEVEL_MARKERS = [
-    "werkstudent", "working student", "praktikum", "praktikant", "praktikantin",
-    "intern", "internship", "hiwi", "wissenschaftliche hilfskraft",
-    "student", "studentische hilfskraft", "trainee", "ausbildung", "azubi",
-    "dual student", "duales studium",
+BLOCK_PAGE_TITLE_PATTERN = re.compile(
+    r"just a moment|attention required|access denied|zugriff verweigert|verify you are human|are you a human"
+    r"|security check|sicherheitsüberprüfung|captcha|blocked|unusual traffic|additional verification"
+    r"|zusätzliche verifizierung|request rejected|403 forbidden|too many requests|429"
+)
+BLOCK_PAGE_TEXT_PATTERN = re.compile(
+    r"verify (?:that )?you are (?:a )?human|are you a robot|i'm not a robot|ich bin kein roboter|unusual traffic"
+    r"|ungewöhnlichen datenverkehr|complete the security check|access to this page has been denied|access denied"
+    r"|zugriff verweigert|too many requests|zu viele anfragen|prove you are human|additional verification required"
+)
+BLOCK_PAGE_URL_PATTERN = re.compile(r"captcha|/challenge|/blocked|access-denied|/sorry/|/distil_r_captcha")
+BLOCK_PAGE_SELECTORS = [
+    "#challenge-running",
+    "#challenge-form",
+    "iframe[src*='challenges.cloudflare.com']",
+    "iframe[src*='hcaptcha.com']",
+    "iframe[src*='geo.captcha-delivery.com']",
+    "#px-captcha",
+    "form[action*='captcha']",
 ]
 
-SENIOR_LEVEL_MARKERS = [
-    "senior", "sr.", "lead", "principal", "staff", "head of", "manager",
-    "director", "vp", "vice president", "chief", "teamlead", "team lead",
-    "gruppenleiter", "abteilungsleiter", "expert",
-]
 
-
-def get_employment_level(text: str) -> str:
-    """
-    Classifies raw text as 'student' (werkstudent/praktikum/intern-level),
-    'senior' (lead/manager/director-level), or 'unspecified'.
-
-    Must be called on text BEFORE clean_search_keywords_and_job_title() strips
-    these same markers out for topic embedding. That stripping is intentional
-    (it lets "Werkstudent KI" and "Working Student AI" embed as the same
-    topic), but it also destroys the employment-level signal -- which is why
-    level compatibility needs its own check instead of relying on embedding
-    similarity alone (a query like "Werkstudent AI" is topically close to a
-    "Senior AI Engineer" title, even though the level is wrong).
-    """
-    lowered = text.lower()
-    is_student = any(marker in lowered for marker in STUDENT_LEVEL_MARKERS)
-    is_senior = any(marker in lowered for marker in SENIOR_LEVEL_MARKERS)
-    if is_student and not is_senior:
-        return "student"
-    if is_senior and not is_student:
-        return "senior"
-    return "unspecified"
-
-
-def is_employment_level_compatible(query_text: str, title_text: str) -> bool:
-    """
-    Conflict-only gate: rejects only a clear, opposite-level mismatch (e.g.
-    query "Werkstudent AI" vs. title "Senior AI Engineer"). A query or title
-    with no level marker at all -- the common case, since German postings
-    often state level only in the query -- always passes.
-
-    This is deliberately independent of topic (AI, backend, data science,
-    ...): it reacts to the same two marker lists regardless of subject, so it
-    generalizes to any query/title pair sharing the same student-vs-senior
-    pattern instead of hardcoding the one example that motivated it.
-    """
-    query_level = get_employment_level(query_text)
-    title_level = get_employment_level(title_text)
-    if query_level == "unspecified" or title_level == "unspecified":
-        return True
-    return query_level == title_level
+def detect_block_page(page) -> str | None:
+    try:
+        title = page.title()
+        url = page.url
+        if match := BLOCK_PAGE_TITLE_PATTERN.search(title.lower()):
+            return f"page title '{title}' matches '{match.group(0)}'"
+        if match := BLOCK_PAGE_URL_PATTERN.search(url.lower()):
+            return f"page URL {url} matches '{match.group(0)}'"
+        for selector in BLOCK_PAGE_SELECTORS:
+            if page.locator(selector).count():
+                return f"challenge element '{selector}' is on the page (title '{title}')"
+        text = page.evaluate("() => document.body ? document.body.innerText.slice(0, 20000) : ''")
+        if match := BLOCK_PAGE_TEXT_PATTERN.search(text.lower()):
+            return f"page text contains '{match.group(0)}' (title '{title}')"
+    except Exception:
+        return None
+    return None
 
 
 def compute_search_keywords_embeddings(model, keywords:list[str]):
@@ -136,14 +127,8 @@ def compute_cosine_similarity(query_emb, job_embs):
 
 
 def find_best_matching_keyword(keywords_embeddings, job_title_emb) -> tuple[int, float]:
-    """
-    Returns (index, score) of the query keyword embedding closest to
-    job_title_emb. Returning the index (not just the score) lets callers look
-    up the winning keyword's original text -- needed for
-    is_employment_level_compatible(), which the score alone can't drive.
-    """
     best_index = -1
-    max_sim = float("-inf")  # not -sys.float_info.max: that's a float64 finite value that overflows when cast against the float32 embeddings, which numpy warns about on every comparison
+    max_sim = float("-inf")
     for index, query_emb in enumerate(keywords_embeddings):
         current_sim = compute_cosine_similarity(query_emb, job_title_emb)
         if current_sim > max_sim:
@@ -153,13 +138,6 @@ def find_best_matching_keyword(keywords_embeddings, job_title_emb) -> tuple[int,
 
 
 def normalize_job_url(url: str) -> str:
-    """
-    Merge-time dedup key: strips tracking params and URL fragments so the same
-    posting reached via different campaign links collapses to one entry.
-    Deliberately a small subset of the fuller normalization described in
-    db-schema_&_dedup.txt (which also canonicalizes company/location) -- that
-    fuller version needs the database this project doesn't have yet.
-    """
     tracking_params = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
     parsed = urlparse(url)
     filtered_query = [(k, v) for k, v in parse_qsl(parsed.query) if k not in tracking_params]
@@ -168,12 +146,8 @@ def normalize_job_url(url: str) -> str:
 
 
 def load_embedding_model_and_keyword_embeddings():
-    """
-    DRYs up the load-model-then-embed-keywords boilerplate needed by main.py
-    and every scraper's standalone __main__ block.
-    """
     model = SentenceTransformer(scraper_common_config["embedding_match_config"]["sentence_embedding_model"])
-    keyword_embeddings = compute_search_keywords_embeddings(model, scraper_common_config["search_keywords"])
+    keyword_embeddings = compute_search_keywords_embeddings(model, scraper_common_config["match_keywords"])
     return model, keyword_embeddings
 
 
@@ -183,6 +157,6 @@ def get_emb_match_job_dict(title, url, title_keyword_emd_match_score, job_postin
         "url": url,
         "title_keyword_emd_match_score": title_keyword_emd_match_score,
         "job_posting_platform": job_posting_platform,
-        "rejection_reason": rejection_reason,  # None (accepted) | "below_threshold" | "employment_level_mismatch" | "title_extraction_failed"
+        "rejection_reason": rejection_reason,  # None (accepted) | "below_threshold" | "title_extraction_failed"
     }
     return output

@@ -1,7 +1,7 @@
 import random
 import time
 
-from src.utils.logger import logger
+from loguru import logger
 
 
 def random_delay(min_seconds: float, max_seconds: float, reason: str = "") -> None:
@@ -32,11 +32,6 @@ def delay_between_sources(config: dict) -> None:
 
 
 def random_scroll(page, config: dict) -> None:
-    """
-    Scrolls down by a random number of random-sized steps, pausing briefly
-    between each -- mimics a human skimming a results page instead of the
-    instant, uniform viewport a bare script produces.
-    """
     cfg = config["throttle_config"]["scroll"]
     steps = random.randint(cfg["min_steps"], cfg["max_steps"])
     for _ in range(steps):

@@ -8,23 +8,47 @@ scraper_common_config = {
     "use_study_smarter_scraper": False,
 
     "browser_profile_path": Path("E:\\(_Coding_Data_)\\Selenium_Chrome_Profiles\\job_listing_data_scrapping_profile"), # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
-    "keywords_job_title_must_include": [], # Job title will always include at least one keyword from the list (OR operation)
-    "keywords_job_title_must_exclude": [],  # Job title will never include any keyword from the list (AND operation)
     "embedding_match_config": {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
         "threshold": 0.50, # to filter non-relevant (or less relevant) job listings
     },
     "throttle_config": {
-        # Human-like timing so scrapers don't hammer job sites with back-to-back requests.
-        # All scrapers read these ranges via src/utils/throttle.py instead of hardcoding delays.
+        # Delay ranges in seconds, read via src/utils/throttle.py
         "between_queries": {"min_seconds": 2.0, "max_seconds": 6.0},
         "between_interactions": {"min_seconds": 0.3, "max_seconds": 1.2},
         "post_page_load": {"min_seconds": 1.0, "max_seconds": 3.0},
         "between_sources": {"min_seconds": 5.0, "max_seconds": 15.0},
         "scroll": {"min_steps": 1, "max_steps": 4, "step_min_pixels": 200, "step_max_pixels": 600, "step_min_seconds": 0.2, "step_max_seconds": 0.8},
     },
+    "circuit_breaker": {
+        "max_consecutive_failures": 3, # abort a scraper after this many failed queries in a row (a detected block page aborts immediately)
+    },
 
-    "search_keywords" :  [
+    # Site queries: one German + one English phrasing per topic. Every extra synonym costs one page load per
+    # location tile and mostly returns the same first page; niche phrasings are caught by match_keywords instead.
+    "search_keywords": [
+        "Werkstudent KI",
+        "Werkstudent Machine Learning",
+        "Werkstudent Data Science",
+        "Werkstudent Data Analytics",
+        "Werkstudent Data Engineering",
+        "Praktikum KI",
+        "Praktikum Machine Learning",
+        "Praktikum Data Science",
+        "Praktikum Data Analytics",
+        "Praktikum Data Engineering",
+        "Working Student AI",
+        "Working Student Machine Learning",
+        "Working Student Data Science",
+        "Working Student Data Analytics",
+        "Working Student Data Engineering",
+        "Intern AI",
+        "Intern Machine Learning",
+        "Intern Data Science",
+    ],
+
+    # Vocabulary that scraped job titles are scored against (never sent to a site, so keep it broad)
+    "match_keywords": [
         # ==========================================================
         # AI / ML
         # ==========================================================

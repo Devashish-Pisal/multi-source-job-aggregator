@@ -8,7 +8,7 @@ from pprint import pprint
 from loguru import logger
 from dotenv import load_dotenv
 from config.path_config import RAW_FOLDER_PATH, PROCESSED_FOLDER_PATH, DUPLICATES_FOLDER_PATH
-from src.utils.util import generate_deduplication_key
+from utils.util import generate_deduplication_key
 
 
 import http.client
