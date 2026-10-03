@@ -3,15 +3,17 @@ from pathlib import Path
 scraper_common_config = {
     # Knobs to enable/disable scrapers
     "use_indeed_scraper": True,
-    "use_stepstone_scraper": False,
-    "use_xing_scraper": False,
-    "use_study_smarter_scraper": False,
+    "use_stepstone_scraper": True,
+    "use_xing_scraper": True,
+    "use_study_smarter_scraper": True,
 
     # Pipeline stages: 1 = title search (browser scrapers), 2 = description scraping + LLM résumé judge (knobs in stage2_config.py)
     "run_stage_1": True,
     "run_stage_2": True,
 
-    "browser_profile_path": Path("E:\\(_Coding_Data_)\\Selenium_Chrome_Profiles\\job_listing_data_scrapping_profile"), # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
+    "log_level": "INFO", # DEBUG | INFO | SUCCESS | WARNING | ERROR | CRITICAL; applied by main.py
+
+    "browser_profile_path": "/home/dev/scraping_chrome_profiles/common_profile/", # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
     "embedding_match_config": {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
         "threshold": 0.50, # to filter non-relevant (or less relevant) job listings
@@ -25,29 +27,29 @@ scraper_common_config = {
         "scroll": {"min_steps": 1, "max_steps": 4, "step_min_pixels": 200, "step_max_pixels": 600, "step_min_seconds": 0.2, "step_max_seconds": 0.8},
     },
     "circuit_breaker": {
-        "max_consecutive_failures": 3, # abort a scraper after this many failed queries in a row (a detected block page aborts immediately)
+        "max_consecutive_failures": 5, # abort a scraper after this many failed queries in a row (a detected block page aborts immediately)
     },
 
     # Site queries: one German + one English phrasing per topic. Every extra synonym costs one page load per
     # location tile and mostly returns the same first page; niche phrasings are caught by match_keywords instead.
     "search_keywords": [
         "Werkstudent KI",
-        "Werkstudent Machine Learning",
-        "Werkstudent Data Science",
-        "Werkstudent Data Analytics",
-        "Werkstudent Data Engineering",
-        "Praktikum KI",
-        "Praktikum Machine Learning",
-        "Praktikum Data Science",
-        "Praktikum Data Analytics",
-        "Praktikum Data Engineering",
-        "Working Student AI",
-        "Working Student Machine Learning",
-        "Working Student Data Science",
-        "Working Student Data Analytics",
-        "Working Student Data Engineering",
-        "Intern AI",
-        "Intern Machine Learning",
+        # "Werkstudent Machine Learning",
+        # "Werkstudent Data Science",
+        # "Werkstudent Data Analytics",
+        # "Werkstudent Data Engineering",
+        # "Praktikum KI",
+        # "Praktikum Machine Learning",
+        # "Praktikum Data Science",
+        # "Praktikum Data Analytics",
+        # "Praktikum Data Engineering",
+        # "Working Student AI",
+        # "Working Student Machine Learning",
+        # "Working Student Data Science",
+        # "Working Student Data Analytics",
+        # "Working Student Data Engineering",
+        # "Intern AI",
+        # "Intern Machine Learning",
         "Intern Data Science",
     ],
 

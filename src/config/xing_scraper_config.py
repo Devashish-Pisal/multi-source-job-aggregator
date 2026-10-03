@@ -5,9 +5,9 @@ xing_scraper_config = {
         # Allowed radius lengths for xing are : 0, 10, 20, 50, 70, 100, 200
         # Non-overlapping tiles: only page 1 of each query is read, so nested circles return the same page again
         "Mannheim": 20, # covers Ludwigshafen, Frankenthal, Weinheim, Viernheim, Schwetzingen
-        "Heidelberg": 20, # covers Walldorf, Sandhausen
-        "Speyer": 10, # covers Hockenheim, Schifferstadt, Limburgerhof
-        "Worms": 10,
+        #"Heidelberg": 20, # covers Walldorf, Sandhausen
+        #"Speyer": 10, # covers Hockenheim, Schifferstadt, Limburgerhof
+        #"Worms": 10,
         # Inside a tile above; uncomment only if that tile saturates (page 1 full)
         #"Ludwigshafen am Rhein": 20,
         #"Walldorf": 20,

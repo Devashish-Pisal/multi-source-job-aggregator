@@ -5,10 +5,10 @@ indeed_scraper_config = {
         # Allowed radius lengths for indeed are : 0, 5, 10, 15, 25, 35, 40, 50, 100
         # Non-overlapping tiles: only page 1 of each query is read, so nested circles return the same page again
         "Mannheim, Baden-Württemberg": 15, # covers Ludwigshafen, Frankenthal, Viernheim, Schwetzingen
-        "Heidelberg, Baden-Württemberg": 15, # covers Walldorf, Sandhausen, Handschuhsheim
-        "Speyer, Rheinland-Pfalz": 10, # covers Hockenheim, Schifferstadt, Limburgerhof
-        "Worms, Rheinland-Pfalz": 10,
-        "Weinheim, Baden-Württemberg": 10, # sits on the edge of the Mannheim tile
+        #"Heidelberg, Baden-Württemberg": 15, # covers Walldorf, Sandhausen, Handschuhsheim
+        #"Speyer, Rheinland-Pfalz": 10, # covers Hockenheim, Schifferstadt, Limburgerhof
+        #"Worms, Rheinland-Pfalz": 10,
+        #"Weinheim, Baden-Württemberg": 10, # sits on the edge of the Mannheim tile
         # Inside a tile above; uncomment only if that tile saturates (page 1 full)
         #"Ludwigshafen am Rhein, Rheinland-Pfalz": 25,
         #"Walldorf, Baden-Württemberg": 25,

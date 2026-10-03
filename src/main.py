@@ -1,3 +1,4 @@
+import sys
 import json
 import time
 import pandas as pd
@@ -130,6 +131,8 @@ def ranked_csv_row(job: dict, run_timestamp: str) -> dict:
 
 
 def main():
+    logger.remove()
+    logger.add(sys.stderr, level=scraper_common_config["log_level"])
     start = time.time()
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     init_db()
