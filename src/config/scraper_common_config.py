@@ -2,10 +2,10 @@ from pathlib import Path
 
 scraper_common_config = {
     # Knobs to enable/disable scrapers
-    "use_indeed_scraper": True,
+    "use_indeed_scraper": False,
     "use_stepstone_scraper": True,
-    "use_xing_scraper": True,
-    "use_study_smarter_scraper": True,
+    "use_xing_scraper": False,
+    "use_study_smarter_scraper": False,
 
     # Pipeline stages: 1 = title search (browser scrapers), 2 = description scraping + LLM résumé judge (knobs in stage2_config.py)
     "run_stage_1": True,
@@ -37,14 +37,14 @@ scraper_common_config = {
         # "Werkstudent Machine Learning",
         # "Werkstudent Data Science",
         # "Werkstudent Data Analytics",
-        # "Werkstudent Data Engineering",
+        "Werkstudent Data Engineering",
         # "Praktikum KI",
         # "Praktikum Machine Learning",
         # "Praktikum Data Science",
         # "Praktikum Data Analytics",
         # "Praktikum Data Engineering",
         # "Working Student AI",
-        # "Working Student Machine Learning",
+        "Working Student Machine Learning",
         # "Working Student Data Science",
         # "Working Student Data Analytics",
         # "Working Student Data Engineering",

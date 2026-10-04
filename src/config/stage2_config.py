@@ -15,7 +15,7 @@ stage2_config = {
         "use_json_response_format": True, # response_format={"type": "json_object"}; set False for providers that reject it
         "timeout_seconds": 60,
         "max_consecutive_failures": 3, # abort the judge pass after this many failed calls in a row (auth/model errors abort at once)
-        "delay_between_calls": {"min_seconds": 0.5, "max_seconds": 2.0},
+        "delay_between_calls": {"min_seconds": 0.5, "max_seconds": 3.0},
         "rejudge_when_model_changes": False, # True: jobs judged by another model are judged again with the current one
         "min_fit_score_to_report": 0, # rows below this fit_score are left out of the ranked CSV
     },

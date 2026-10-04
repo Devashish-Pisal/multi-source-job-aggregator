@@ -5,7 +5,7 @@ import pandas as pd
 from loguru import logger
 from datetime import datetime
 from pprint import pprint
-from config.path_config import RAW_FOLDER_PATH, DUPLICATES_FOLDER_PATH, PROCESSED_FOLDER_PATH
+from config.path_config import RAW_FOLDER_PATH, DUPLICATES_FOLDER_PATH, PROCESSED_FOLDER_PATH, LOGS_FOLDER_PATH
 from config.scraper_common_config import scraper_common_config
 from config.stage2_config import stage2_config
 from sources.stepstone_scraper import StepstoneScraper
@@ -132,9 +132,10 @@ def ranked_csv_row(job: dict, run_timestamp: str) -> dict:
 
 def main():
     logger.remove()
-    logger.add(sys.stderr, level=scraper_common_config["log_level"])
     start = time.time()
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    logger.add((LOGS_FOLDER_PATH / (run_timestamp + ".log")), retention="15 day",level=scraper_common_config["log_level"]) # for file
+    logger.add(sys.stderr,level=scraper_common_config["log_level"]) # for console
     init_db()
 
     unique_jobs = []
