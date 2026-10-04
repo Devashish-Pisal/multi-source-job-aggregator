@@ -68,6 +68,11 @@ def _employment_type_text(employment_type) -> str | None:
     return employment_type or None
 
 
+def _date_only(value) -> str | None:
+    match = re.match(r"\d{4}-\d{2}-\d{2}", str(value or "").strip())
+    return match.group(0) if match else None
+
+
 def parse_job_posting_json_ld(html: str) -> dict | None:
     for block in JSON_LD_SCRIPT_PATTERN.findall(html):
         try:
@@ -82,7 +87,7 @@ def parse_job_posting_json_ld(html: str) -> dict | None:
             "company": _organization_name(posting.get("hiringOrganization")),
             "location": _location_text(posting.get("jobLocation")),
             "employment_type": _employment_type_text(posting.get("employmentType")),
-            "date_posted": posting.get("datePosted") or None,
+            "date_posted": _date_only(posting.get("datePosted")),
             "description": html_to_text(posting.get("description") or "") or None,
         }
     return None

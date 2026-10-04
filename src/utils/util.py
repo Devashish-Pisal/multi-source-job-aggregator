@@ -1,17 +1,11 @@
-import hashlib
 import re
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from config.scraper_common_config import scraper_common_config
 
-def generate_deduplication_key(title:str, company:str, location:str):
-    normalized = f"{title.strip().lower()}|{company.strip().lower()}|{location.strip().lower()}"
-    return hashlib.md5(normalized.encode()).hexdigest()
 
-
-NOISE_WORDS = [
-    # employment type
+EMPLOYMENT_NOISE_WORDS = [
     "werkstudent",
     "working student",
     "praktikum",
@@ -24,7 +18,8 @@ NOISE_WORDS = [
     "studentenjob",
     "research assistant",
     "wissenschaftliche hilfskraft",
-    # gender / legal
+]
+GENDER_NOISE_WORDS = [
     "m/w/d",
     "w/m/d",
     "m/f/d",
@@ -35,7 +30,8 @@ NOISE_WORDS = [
     "f/m/d",
     "all genders",
     "gn",
-    # contract / meta
+]
+CONTRACT_NOISE_WORDS = [
     "full time",
     "part time",
     "teilzeit",
@@ -46,17 +42,26 @@ NOISE_WORDS = [
     "home office",
     "befristet",
     "unbefristet",
-    # job board noise
+]
+BOARD_NOISE_WORDS = [
     "job id",
     "job-id",
     "ref",
 ]
+NOISE_WORDS = EMPLOYMENT_NOISE_WORDS + GENDER_NOISE_WORDS + CONTRACT_NOISE_WORDS + BOARD_NOISE_WORDS
 
 
 NOISE_WORDS_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(w) for w in sorted(NOISE_WORDS, key=len, reverse=True)) + r")\b"
 )
-GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]in(?:nen)?\b")  # praktikant/in, werkstudent:in, entwickler*innen
+GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]-?in(?:nen)?\b")  # praktikant/in, werkstudent:in, entwickler*innen
+TITLE_REQUIRED_WORDS_PATTERN = re.compile(
+    r"\b(?:" + "|".join(re.escape(w.lower()) for w in sorted(scraper_common_config["title_required_words"], key=len, reverse=True)) + r")\b"
+) if scraper_common_config["title_required_words"] else None
+
+
+def has_required_title_word(title: str) -> bool:
+    return TITLE_REQUIRED_WORDS_PATTERN is None or bool(TITLE_REQUIRED_WORDS_PATTERN.search(title.lower()))
 
 
 def clean_search_keywords_and_job_title(text: str) -> str:
@@ -134,15 +139,14 @@ def find_best_matching_keyword(keywords_embeddings, job_title_emb) -> tuple[int,
         if current_sim > max_sim:
             max_sim = current_sim
             best_index = index
-    return best_index, max_sim
+    return best_index, float(max_sim) # sqlite would store np.float32 as a blob
 
 
 def normalize_job_url(url: str) -> str:
-    tracking_params = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
-    parsed = urlparse(url)
-    filtered_query = [(k, v) for k, v in parse_qsl(parsed.query) if k not in tracking_params]
-    normalized = parsed._replace(query=urlencode(filtered_query), fragment="")
-    return urlunparse(normalized).rstrip("/").lower()
+    parsed = urlparse(url.strip())
+    filtered_query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not k.startswith("utm_") and k not in ("fbclid", "gclid")]
+    normalized = parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), query=urlencode(filtered_query), fragment="")
+    return urlunparse(normalized)
 
 
 def load_embedding_model_and_keyword_embeddings():
@@ -151,12 +155,12 @@ def load_embedding_model_and_keyword_embeddings():
     return model, keyword_embeddings
 
 
-def get_emb_match_job_dict(title, url, title_keyword_emd_match_score, job_posting_platform, rejection_reason=None):
+def get_emb_match_job_dict(title, url, title_score, matched_keyword, platform):
     output = {
         "title": title,
         "url": url,
-        "title_keyword_emd_match_score": title_keyword_emd_match_score,
-        "job_posting_platform": job_posting_platform,
-        "rejection_reason": rejection_reason,  # None (accepted) | "below_threshold" | "title_extraction_failed"
+        "title_score": title_score,
+        "matched_keyword": matched_keyword,
+        "platform": platform,
     }
     return output

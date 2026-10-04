@@ -11,5 +11,9 @@ data/
 logs/
 docs/
 
+# personal prompt and résumé, only the examples are tracked
+profile/*
+!profile/*.example.md
+
 # files
-CLAUDE.md 
+CLAUDE.md

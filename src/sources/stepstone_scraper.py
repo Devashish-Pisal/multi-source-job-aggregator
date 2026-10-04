@@ -1,8 +1,9 @@
 import random
 import re
+import sys
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin
 
 from loguru import logger
 from playwright.sync_api import sync_playwright
@@ -16,6 +17,8 @@ from utils.util import (
     find_best_matching_keyword,
     load_embedding_model_and_keyword_embeddings,
     detect_block_page,
+    has_required_title_word,
+    normalize_job_url,
 )
 from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
@@ -31,6 +34,7 @@ class StepstoneScraper:
         self.query_urls = None
         self.query_matched_emb_accepted_jobs = []
         self.query_matched_emb_rejected_jobs = []
+        self.query_yield = [] # accepted urls per query
         self.description_scraped_jobs = [] # filled by run_description_scraper (stage 2)
 
 
@@ -41,45 +45,45 @@ class StepstoneScraper:
             self.query_matched_emb_accepted_jobs, self.query_matched_emb_rejected_jobs = self.extract_job_urls(self.query_urls)
             logger.info(f"[Stepstone Scraper] Stepstone found total {len(self.query_matched_emb_accepted_jobs)} query matching accepted job urls and {len(self.query_matched_emb_rejected_jobs)} query matching rejected urls.")
         else:
-            logger.warning(f"[Stepstone Scraper] Stepstone scraper is disabled in common config!")
+            logger.info(f"[Stepstone Scraper] Stepstone scraper is disabled in common config!")
 
 
-    def run_description_scraper(self, run_timestamp: str):
+    def run_description_scraper(self):
         if scraper_common_config["use_stepstone_scraper"]:
             limit = stage2_config["max_detail_pages_per_platform"]
             pending_jobs = jobs_pending_description("stepstone", limit)
             logger.info(f"[Stepstone Scraper] {len(pending_jobs)} job detail pages pending (at most {limit} per run)")
             if pending_jobs:
-                self.description_scraped_jobs = self.extract_job_descriptions(pending_jobs, run_timestamp)
+                self.description_scraped_jobs = self.extract_job_descriptions(pending_jobs)
             status_counts = dict(Counter(job["description_status"] for job in self.description_scraped_jobs))
             logger.info(f"[Stepstone Scraper] Detail pages visited: {status_counts}")
         else:
-            logger.warning(f"[Stepstone Scraper] Stepstone scraper is disabled in common config!")
+            logger.info(f"[Stepstone Scraper] Stepstone scraper is disabled in common config!")
 
 
     @staticmethod
-    def build_query_urls() -> list[str]:
+    def build_query_urls() -> list[tuple[str, str, str]]:
         urls = []
         location_radius_pairs = stepstone_scraper_config["location_radius_pairs"]
         keywords_list = scraper_common_config["search_keywords"]
         job_age = stepstone_scraper_config["job_age"]
         base_url = stepstone_scraper_config["BASE_URL"]
-        for k,v in location_radius_pairs.items():
-            for kw in keywords_list:
-                kw = kw.strip().lower().replace(" ", "-")
-                k = k.strip().lower().replace(" ", "-")
+        for location, v in location_radius_pairs.items():
+            for keyword in keywords_list:
+                kw = keyword.strip().lower().replace(" ", "-")
+                k = location.strip().lower().replace(" ", "-")
                 url = base_url.format(
                     keywords=kw,
                     location=k,
                     radius=v,
                     job_age=job_age,
                 )
-                urls.append(url)
+                urls.append((url, keyword, location))
         random.shuffle(urls)
         return urls
 
 
-    def extract_job_urls(self, query_url_list:list[str]) -> tuple[list[dict], list[dict]]:
+    def extract_job_urls(self, query_url_list:list[tuple[str, str, str]]) -> tuple[list[dict], list[dict]]:
         accepted_job_urls = set()
         rejected_job_urls = set()
         accepted_jobs = []
@@ -104,11 +108,12 @@ class StepstoneScraper:
             try:
                 page = context.new_page()
                 page.set_default_timeout(15000)
-                page.on("pageerror", lambda exc: logger.error(f"[Stepstone Scraper] [Page Error] {exc}"))
-                page.on("requestfailed", lambda req: logger.warning(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url}"))
+                page.on("pageerror", lambda exc: logger.debug(f"[Stepstone Scraper] [Page Error] {exc}"))
+                page.on("requestfailed", lambda req: logger.debug(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
                 max_failures = scraper_common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
-                for index, url in enumerate(query_url_list):
+                for index, (url, keyword, location) in enumerate(query_url_list):
+                    query_accepted = []
                     try:
                         page.goto(url, wait_until="domcontentloaded")
                         delay_after_page_load(scraper_common_config)
@@ -125,19 +130,22 @@ class StepstoneScraper:
                                 href = links.nth(i).get_attribute("href")
                                 title = links.nth(i).locator("div").nth(2).inner_text()
                                 if href and title:
-                                    href = "https://www.stepstone.de/"+ href
+                                    href = normalize_job_url(urljoin("https://www.stepstone.de/", href))
                                     job_title_emb = compute_embedding(self.embedding_model, title)
                                     best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
                                     max_sim = round(max_sim, 4)
                                     best_matching_keyword = match_keywords[best_index]
-                                    if max_sim >= threshold:
+                                    if max_sim >= threshold and has_required_title_word(title):
+                                        query_accepted.append(href)
                                         if href not in accepted_job_urls:
                                             accepted_job_urls.add(href)
-                                            accepted_jobs.append(get_emb_match_job_dict(title, href, max_sim, "stepstone"))
+                                            accepted_jobs.append(get_emb_match_job_dict(title, href, max_sim, best_matching_keyword, "stepstone"))
                                     elif href not in rejected_job_urls:
                                         rejected_job_urls.add(href)
-                                        rejected_jobs.append(get_emb_match_job_dict(title, href, max_sim, "stepstone", rejection_reason="below_threshold"))
-                                        logger.warning(f"[Stepstone Scraper] Rejecting '{title}' (below_threshold) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={href}")
+                                        rejected_jobs.append(get_emb_match_job_dict(title, href, max_sim, best_matching_keyword, "stepstone"))
+                                        logger.debug(f"[Stepstone Scraper] Rejecting '{title}' ({'below threshold' if max_sim < threshold else 'no required title word'}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={href}")
+                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted})
+                        logger.debug(f"[Stepstone Scraper] '{keyword}' in {location}: {len(query_accepted)} accepted")
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1
@@ -159,7 +167,7 @@ class StepstoneScraper:
         return accepted_jobs, rejected_jobs
 
 
-    def extract_job_descriptions(self, jobs: list[dict], run_timestamp: str) -> list[dict]:
+    def extract_job_descriptions(self, jobs: list[dict]) -> list[dict]:
         scraped_jobs = []
         max_attempts = stage2_config["max_description_attempts"]
         detail = stepstone_scraper_config["detail_page"]
@@ -181,8 +189,8 @@ class StepstoneScraper:
             try:
                 page = context.new_page()
                 page.set_default_timeout(15000)
-                page.on("pageerror", lambda exc: logger.error(f"[Stepstone Scraper] [Page Error] {exc}"))
-                page.on("requestfailed", lambda req: logger.warning(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url}"))
+                page.on("pageerror", lambda exc: logger.debug(f"[Stepstone Scraper] [Page Error] {exc}"))
+                page.on("requestfailed", lambda req: logger.debug(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
                 max_failures = scraper_common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
                 for index, job in enumerate(jobs):
@@ -198,7 +206,7 @@ class StepstoneScraper:
                                 accept_cookies.click() # accept cookies
                         expired_reason = detect_expired_page(page, response, STEPSTONE_EXPIRED_PATTERN)
                         if expired_reason:
-                            mark_description_expired(job["url_key"], run_timestamp)
+                            mark_description_expired(job["id"])
                             job["description_status"] = "expired"
                             logger.info(f"[Stepstone Scraper] Job posting expired ({expired_reason}) | URL: {url}")
                         else:
@@ -214,14 +222,14 @@ class StepstoneScraper:
                                 fields["location"] = first_inner_text(page, detail["location"])
                             if not fields["description"]:
                                 raise ValueError("no description found (no JSON-LD JobPosting and the CSS fallback matched nothing)")
-                            save_description(job["url_key"], fields, run_timestamp)
-                            job.update(fields, description_status="ok")
-                            logger.info(f"[Stepstone Scraper] Scraped description via {fields['description_source']} ({len(fields['description'])} chars) for '{job['title']}' at '{fields.get('company')}' | URL: {url}")
+                            job.update(save_description(job["id"], fields))
+                            duplicate = f" -- duplicate of job #{job['original_id']} ({job['match']}); URL kept on it, row not stored" if job.get("original_id") else ""
+                            logger.info(f"[Stepstone Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{duplicate} | URL: {url}")
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1
                         error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
-                        job["description_status"] = record_description_failure(job["url_key"], max_attempts)
+                        job["description_status"] = record_description_failure(job["id"], max_attempts)
                         block_reason = detect_block_page(page)
                         logger.warning(f"[Stepstone Scraper] Detail page failed ({consecutive_failures}/{max_failures} consecutive, now '{job['description_status']}'): {error} | URL: {url}")
                         if block_reason or consecutive_failures >= max_failures:
@@ -240,9 +248,10 @@ class StepstoneScraper:
 
 
 if __name__=="__main__":
-    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    logger.remove()
+    logger.add(sys.stderr, level=scraper_common_config["log_level"])
     embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
     stepstone_scraper = StepstoneScraper(embedding_model, keyword_embeddings)
     stepstone_scraper.run_scraper()
-    upsert_stage1_jobs(stepstone_scraper.query_matched_emb_accepted_jobs + stepstone_scraper.query_matched_emb_rejected_jobs, run_timestamp)
-    stepstone_scraper.run_description_scraper(run_timestamp)
+    upsert_stage1_jobs(stepstone_scraper.query_matched_emb_accepted_jobs)
+    stepstone_scraper.run_description_scraper()

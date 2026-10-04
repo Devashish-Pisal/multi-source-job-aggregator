@@ -2,24 +2,31 @@ from pathlib import Path
 
 scraper_common_config = {
     # Knobs to enable/disable scrapers
-    "use_indeed_scraper": False,
+    "use_indeed_scraper": True,
     "use_stepstone_scraper": True,
-    "use_xing_scraper": False,
-    "use_study_smarter_scraper": False,
+    "use_xing_scraper": True,
+    "use_study_smarter_scraper": True,
 
-    # Pipeline stages: 1 = title search (browser scrapers), 2 = description scraping + LLM résumé judge (knobs in stage2_config.py)
+    # 1 = search pages, 2 = job pages + judge
     "run_stage_1": True,
     "run_stage_2": True,
 
-    "log_level": "INFO", # DEBUG | INFO | SUCCESS | WARNING | ERROR | CRITICAL; applied by main.py
+    "log_level": "INFO", # DEBUG, INFO, WARNING, ...
 
     "browser_profile_path": "/home/dev/scraping_chrome_profiles/common_profile/", # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
     "embedding_match_config": {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
-        "threshold": 0.50, # to filter non-relevant (or less relevant) job listings
+        "threshold": 0.43, # to filter non-relevant (or less relevant) job listings
     },
+    # title must contain one of these words, [] turns it off
+    "title_required_words": [
+        "werkstudent", "werkstudentin", "werkstudenten", "werkstudierende", "working student",
+        "praktikum", "pflichtpraktikum", "praktikant", "praktikantin", "praktika", "praxissemester",
+        "intern", "internship", "thesis", "abschlussarbeit", "masterarbeit", "bachelorarbeit", "masterand",
+        "studentische", "student", "studenten",
+    ],
     "throttle_config": {
-        # Delay ranges in seconds, read via src/utils/throttle.py
+        # delay ranges in seconds
         "between_queries": {"min_seconds": 2.0, "max_seconds": 6.0},
         "between_interactions": {"min_seconds": 0.3, "max_seconds": 1.2},
         "post_page_load": {"min_seconds": 1.0, "max_seconds": 3.0},
@@ -27,87 +34,58 @@ scraper_common_config = {
         "scroll": {"min_steps": 1, "max_steps": 4, "step_min_pixels": 200, "step_max_pixels": 600, "step_min_seconds": 0.2, "step_max_seconds": 0.8},
     },
     "circuit_breaker": {
-        "max_consecutive_failures": 5, # abort a scraper after this many failed queries in a row (a detected block page aborts immediately)
+        "max_consecutive_failures": 5, # failed queries in a row before a scraper gives up
     },
 
-    # Site queries: one German + one English phrasing per topic. Every extra synonym costs one page load per
-    # location tile and mostly returns the same first page; niche phrasings are caught by match_keywords instead.
+    # sent to the sites; each one costs a page load per location, so keep it short
     "search_keywords": [
         "Werkstudent KI",
-        # "Werkstudent Machine Learning",
-        # "Werkstudent Data Science",
-        # "Werkstudent Data Analytics",
-        "Werkstudent Data Engineering",
-        # "Praktikum KI",
-        # "Praktikum Machine Learning",
-        # "Praktikum Data Science",
-        # "Praktikum Data Analytics",
-        # "Praktikum Data Engineering",
-        # "Working Student AI",
-        "Working Student Machine Learning",
-        # "Working Student Data Science",
-        # "Working Student Data Analytics",
-        # "Working Student Data Engineering",
-        # "Intern AI",
-        # "Intern Machine Learning",
-        "Intern Data Science",
-    ],
-
-    # Vocabulary that scraped job titles are scored against (never sent to a site, so keep it broad)
-    "match_keywords": [
-        # ==========================================================
-        # AI / ML
-        # ==========================================================
-        # Werkstudent
-        "Werkstudent KI",
-        "Werkstudent AI",
-        "Werkstudent Künstliche Intelligenz",
         "Werkstudent Machine Learning",
-        "Werkstudent Maschinelles Lernen",
-        "Werkstudent Generative AI",
-        "Werkstudent LLM",
-        "Werkstudent NLP",
-
-        # Working Student
-        "Working Student AI",
-        "Working Student Artificial Intelligence",
-        "Working Student Machine Learning",
-        "Working Student Generative AI",
-        "Working Student LLM",
-        "Working Student NLP",
-
-        # Internship
-        "Praktikum KI",
-        "Praktikum AI",
-        "Praktikum Machine Learning",
-        "Intern AI",
-        "Intern Machine Learning",
-        "Intern LLM",
-
-        # ==========================================================
-        # DATA SCIENCE
-        # ==========================================================
-        # Werkstudent
         "Werkstudent Data Science",
         "Werkstudent Data Analytics",
         "Werkstudent Data Engineering",
-        "Werkstudent Business Intelligence",
-        "Werkstudent Data Analyst",
-
-        # Working Student
-        "Working Student Data Science",
-        "Working Student Data Analytics",
-        "Working Student Data Engineering",
-        "Working Student Business Intelligence",
-        "Working Student Data Analyst",
-
-        # Internship
+        "Praktikum KI",
+        "Praktikum Machine Learning",
         "Praktikum Data Science",
         "Praktikum Data Analytics",
         "Praktikum Data Engineering",
+        "Working Student AI",
+        "Working Student Machine Learning",
+        "Working Student Data Science",
+        "Working Student Data Analytics",
+        "Working Student Data Engineering",
+        "Intern AI",
+        "Intern Machine Learning",
         "Intern Data Science",
-        "Intern Data Analytics",
-        "Intern Data Engineering",
+    ],
+
+    # titles are scored against these topics (never sent to a site)
+    "match_keywords": [
+        # automation / digitalisation
+        "Automatisierung",
+        "Prozessautomatisierung",
+        "Automation",
+        "Process Automation",
+        "Intelligent Automation",
+        "Business Automation",
+        "Digitalisierung",
+        "Digitale Transformation",
+        "Digital Transformation",
+        # ai / data
+        "KI",
+        "AI",
+        "Künstliche Intelligenz",
+        "Artificial Intelligence",
+        "Machine Learning",
+        "Maschinelles Lernen",
+        "Generative AI",
+        "LLM",
+        "NLP",
+        "Data Science",
+        "Data Analytics",
+        "Data Analyst",
+        "Data Engineering",
+        "Business Intelligence",
     ],
 }
 

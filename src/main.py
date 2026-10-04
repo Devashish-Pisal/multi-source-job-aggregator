@@ -1,20 +1,21 @@
 import sys
-import json
 import time
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 from loguru import logger
-from datetime import datetime
-from pprint import pprint
-from config.path_config import RAW_FOLDER_PATH, DUPLICATES_FOLDER_PATH, PROCESSED_FOLDER_PATH, LOGS_FOLDER_PATH
+
+from config.path_config import RAW_FOLDER_PATH, REJECTED_FOLDER_PATH, LOGS_FOLDER_PATH, DATABASE_FILE_PATH
 from config.scraper_common_config import scraper_common_config
-from config.stage2_config import stage2_config
 from sources.stepstone_scraper import StepstoneScraper
 from sources.indeed_scraper import IndeedScraper
 from sources.xing_scraper import XingScraper
 from sources.study_smarter_scraper import StudySmarterScraper
-from utils.util import load_embedding_model_and_keyword_embeddings, normalize_job_url
+from utils.util import load_embedding_model_and_keyword_embeddings
 from utils.throttle import delay_between_sources
-from utils.db import init_db, upsert_stage1_jobs, ranked_jobs, status_counts
+from utils.db import init_db, upsert_stage1_jobs, jobs_pending_judge, db_summary
 from utils.llm_judge import judge_pending_jobs
 
 SCRAPER_CLASSES = {
@@ -24,163 +25,182 @@ SCRAPER_CLASSES = {
     "xing": XingScraper,
 }
 
-JOB_CSV_COLUMNS = ["title", "url", "title_keyword_emd_match_score", "job_posting_platform", "rejection_reason"]
-DESCRIPTION_CSV_COLUMNS = ["title", "url", "job_posting_platform", "description_status", "description_source", "company", "location", "employment_type", "date_posted", "description_chars"]
-RANKED_CSV_COLUMNS = ["title", "company", "location", "employment_type", "fit_score", "level_ok", "language_requirement", "german_level", "missing_must_haves", "reason", "job_posting_platform", "url", "first_seen_run", "is_new_this_run"]
+JOB_CSV_COLUMNS = ["title", "url", "title_score", "matched_keyword", "platform"]
+DESCRIPTION_CSV_COLUMNS = ["id", "title", "url", "platform", "description_status", "original_id", "match", "dedup_key", "description_source", "company", "location", "employment_type", "date_posted", "description_chars"]
+STAGE2_STATUS_LABELS = {"ok": "ok", "duplicate": "duplicate", "expired": "expired", "failed": "failed", "pending": "retry next run"}
+DIVIDER = "=" * 100
+TOP_N = 20
 
 
-def save_csv(rows: list[dict], columns: list[str], folder, filename: str) -> None:
+def enabled_scrapers() -> dict:
+    return {name: scraper_class for name, scraper_class in SCRAPER_CLASSES.items() if scraper_common_config[f"use_{name}_scraper"]}
+
+
+def save_csv(rows: list[dict], columns: list[str], folder: Path, filename: str) -> Path | None:
+    if not rows:
+        logger.info(f"[main] No rows for {filename}, CSV not written")
+        return None
     folder.mkdir(parents=True, exist_ok=True)
     file_path = folder / filename
     pd.DataFrame(rows, columns=columns).to_csv(file_path, encoding="utf-8", index=False)
     logger.info(f"[main] Wrote {len(rows)} rows to {file_path}")
+    return file_path
 
 
-def run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp: str) -> dict[str, tuple[list[dict], list[dict]]]:
-    results = {}
-    for index, (name, scraper_class) in enumerate(SCRAPER_CLASSES.items()):
+def run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp: str, run: dict) -> list[dict]:
+    accepted_jobs = []
+    for index, (name, scraper_class) in enumerate(enabled_scrapers().items()):
         scraper = scraper_class(embedding_model, keyword_embeddings)
-        interrupted = False
+        outcome = "completed"
         try:
             if index > 0:
                 delay_between_sources(scraper_common_config)
             scraper.run_scraper()
         except KeyboardInterrupt:
-            interrupted = True
+            outcome = "interrupted"
             logger.warning(f"[main] Interrupted during '{name}' -- saving what was collected so far and skipping the remaining sources.")
         except Exception:
+            outcome = "failed"
             logger.exception(f"[main] '{name}' scraper failed -- saving what it collected before the failure and continuing with the remaining sources.")
-        results[name] = (scraper.query_matched_emb_accepted_jobs, scraper.query_matched_emb_rejected_jobs)
-        save_csv(results[name][0] + results[name][1], JOB_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_jobs_{run_timestamp}.csv")
-        if interrupted:
+        accepted, rejected = scraper.query_matched_emb_accepted_jobs, scraper.query_matched_emb_rejected_jobs
+        accepted_jobs += accepted
+        run["yield"] += scraper.query_yield
+        run["stage1"][name] = {"outcome": outcome, "accepted": len(accepted), "rejected": len(rejected), "untitled": sum(1 for job in rejected if job["title"] is None)}
+        run["files"] += [save_csv(accepted, JOB_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_jobs_{run_timestamp}.csv"),
+                         save_csv(rejected, JOB_CSV_COLUMNS, REJECTED_FOLDER_PATH, f"{name}_rejected_{run_timestamp}.csv")]
+        if outcome == "interrupted":
             break
-    return results
-
-
-def merge_and_rank(accepted_job_lists: list[list[dict]]) -> tuple[list[dict], list[dict]]:
-    all_jobs = [job for jobs in accepted_job_lists for job in jobs]
-    all_jobs.sort(key=lambda job: job["title_keyword_emd_match_score"], reverse=True)
-
-    seen_urls = set()
-    unique_jobs = []
-    duplicate_jobs = []
-    for job in all_jobs:
-        key = normalize_job_url(job["url"])
-        if key in seen_urls:
-            duplicate_jobs.append(job)
-        else:
-            seen_urls.add(key)
-            unique_jobs.append(job)
-    return unique_jobs, duplicate_jobs
+    return accepted_jobs
 
 
 def description_csv_row(job: dict) -> dict:
-    return {
-        "title": job.get("title"),
-        "url": job["url"],
-        "job_posting_platform": job["platform"],
-        "description_status": job.get("description_status"),
-        "description_source": job.get("description_source"),
-        "company": job.get("company"),
-        "location": job.get("location"),
-        "employment_type": job.get("employment_type"),
-        "date_posted": job.get("date_posted"),
-        "description_chars": len(job["description"]) if job.get("description") else 0,
-    }
+    row = {column: job.get(column) for column in DESCRIPTION_CSV_COLUMNS}
+    row["original_id"] = job.get("original_id") or "" # avoids 14.0 in the csv
+    row["description_chars"] = len(job["description"]) if job.get("description") else 0
+    return row
 
 
-def run_description_scrapers(run_timestamp: str) -> dict[str, list[dict]]:
-    results = {}
-    for index, (name, scraper_class) in enumerate(SCRAPER_CLASSES.items()):
+def run_description_scrapers(run_timestamp: str, run: dict) -> None:
+    for index, (name, scraper_class) in enumerate(enabled_scrapers().items()):
         scraper = scraper_class()
-        interrupted = False
+        outcome = "completed"
         try:
             if index > 0:
                 delay_between_sources(scraper_common_config)
-            scraper.run_description_scraper(run_timestamp)
+            scraper.run_description_scraper()
         except KeyboardInterrupt:
-            interrupted = True
+            outcome = "interrupted"
             logger.warning(f"[main] Interrupted during '{name}' description scraping -- pages finished so far are in the DB; skipping the remaining sources.")
         except Exception:
+            outcome = "failed"
             logger.exception(f"[main] '{name}' description scraper failed -- pages finished before the failure are in the DB; continuing with the remaining sources.")
-        results[name] = scraper.description_scraped_jobs
-        save_csv([description_csv_row(job) for job in results[name]], DESCRIPTION_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_descriptions_{run_timestamp}.csv")
-        if interrupted:
+        jobs = scraper.description_scraped_jobs
+        run["stage2"][name] = {"outcome": outcome, "visited": len(jobs), "statuses": Counter(job["description_status"] for job in jobs)}
+        run["files"].append(save_csv([description_csv_row(job) for job in jobs], DESCRIPTION_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_descriptions_{run_timestamp}.csv"))
+        if outcome == "interrupted":
             break
-    return results
 
 
-def ranked_csv_row(job: dict, run_timestamp: str) -> dict:
-    verdict = json.loads(job["judge_json"]) if job.get("judge_json") else {}
-    return {
-        "title": job["title"],
-        "company": job.get("company"),
-        "location": job.get("location"),
-        "employment_type": verdict.get("employment_type") or job.get("employment_type"),
-        "fit_score": job["fit_score"],
-        "level_ok": verdict.get("level_ok"),
-        "language_requirement": verdict.get("language_requirement"),
-        "german_level": verdict.get("german_level"),
-        "missing_must_haves": "; ".join(verdict.get("missing_must_haves") or []),
-        "reason": verdict.get("reason"),
-        "job_posting_platform": job["platform"],
-        "url": job["url"],
-        "first_seen_run": job["first_seen_run"],
-        "is_new_this_run": job["first_seen_run"] == run_timestamp,
-    }
+def yield_by(entries: list[dict], field: str) -> list[tuple[str, int, int]]:
+    finders = {}
+    for entry in entries:
+        for url in entry["accepted_urls"]:
+            finders.setdefault(url, set()).add(entry[field])
+    found, only = Counter(), Counter()
+    for values in finders.values():
+        for value in values:
+            found[value] += 1
+            only[value] += len(values) == 1
+    return sorted(((value, found[value], only[value]) for value in {entry[field] for entry in entries}), key=lambda row: (-row[2], -row[1], row[0]))
+
+
+def log_job_lines(jobs: list[dict]) -> None:
+    for job in jobs:
+        logger.info(f"  {job['fit_score']:>3} | {job['title']} | {job['company']} | {job['location']} | {job['platform']}")
+        logger.info(f"        {job['url']}")
+
+
+def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
+    logger.info(DIVIDER)
+    logger.info(f"RUN SUMMARY  {run_timestamp}  ({minutes:.1f} min)")
+    logger.info(DIVIDER)
+    disabled = [name for name in SCRAPER_CLASSES if name not in enabled_scrapers()]
+    if disabled:
+        logger.info(f"Disabled sources: {', '.join(disabled)}")
+    if not scraper_common_config["run_stage_1"]:
+        logger.info("Stage 1 | skipped (run_stage_1 is False)")
+    for name, stats in run["stage1"].items():
+        untitled = f" ({stats['untitled']} without a title)" if stats["untitled"] else ""
+        logger.info(f"Stage 1 | {name:<13} | {stats['outcome']:<11} | accepted {stats['accepted']:>3} | rejected {stats['rejected']:>3}{untitled}")
+    if run["db"]:
+        logger.info(f"Stage 1 | database      | {run['db'][0]} new jobs, {run['db'][1]} already known")
+    for field in ("keyword", "location"):
+        rows = yield_by(run["yield"], field)
+        if rows:
+            logger.info(f"Stage 1 | {field} yield (accepted jobs | found by no other {field}):")
+            for value, found, only in rows:
+                logger.info(f"  {value:<40} {found:>4} | {only:>4}")
+    if not scraper_common_config["run_stage_2"]:
+        logger.info("Stage 2 | skipped (run_stage_2 is False)")
+    for name, stats in run["stage2"].items():
+        counts = ", ".join(f"{label} {stats['statuses'][status]}" for status, label in STAGE2_STATUS_LABELS.items() if stats["statuses"][status])
+        logger.info(f"Stage 2 | {name:<13} | {stats['outcome']:<11} | {stats['visited']} detail pages{': ' + counts if counts else ''}")
+    if run["judge"]:
+        judge = run["judge"]
+        logger.info(f"Judge   | {len(judge['judged'])} judged, {judge['failed']} failed, {judge['awaiting']} awaiting a verdict")
+        top = sorted(judge["judged"], key=lambda job: job["fit_score"], reverse=True)[:TOP_N]
+        if top:
+            logger.info(f"Top {len(top)} jobs judged in this run (fit | title | company | location | platform):")
+            log_job_lines(top)
+    for path in run["files"]:
+        if path:
+            logger.info(f"File    | {path}")
+
+
+def log_db_summary() -> None:
+    try:
+        summary = db_summary(TOP_N)
+    except Exception as exc:
+        logger.error(f"[main] Database summary unavailable: {exc}")
+        return
+    logger.info(DIVIDER)
+    logger.info(f"DATABASE SUMMARY  {DATABASE_FILE_PATH}")
+    logger.info(DIVIDER)
+    logger.info(f"Jobs         | {summary['total']} total | " + ", ".join(f"{platform} {count}" for platform, count in summary["per_platform"].items()) + f" | {summary['folded_urls']} duplicate URLs folded into kept jobs")
+    logger.info("Descriptions | " + ", ".join(f"{status} {count}" for status, count in summary["per_status"].items()))
+    logger.info(f"Judge        | {summary['judged']} judged, {summary['awaiting_judge']} awaiting a verdict | fit " + ", ".join(f"{bucket}: {count}" for bucket, count in summary["fit_buckets"].items()))
+    if summary["top_jobs"]:
+        logger.info(f"Top {len(summary['top_jobs'])} jobs in the database (fit | title | company | location | platform):")
+        log_job_lines(summary["top_jobs"])
+    logger.info(DIVIDER)
 
 
 def main():
     logger.remove()
     start = time.time()
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    logger.add((LOGS_FOLDER_PATH / (run_timestamp + ".log")), retention="15 day",level=scraper_common_config["log_level"]) # for file
+    logger.add(LOGS_FOLDER_PATH / "{time:YYYY-MM-DD_HH-mm-ss}.log", retention="15 day", level=scraper_common_config["log_level"]) # for file
     logger.add(sys.stderr,level=scraper_common_config["log_level"]) # for console
-    init_db()
+    run = {"stage1": {}, "yield": [], "db": None, "stage2": {}, "judge": None, "files": []}
+    try:
+        init_db()
+        if scraper_common_config["run_stage_1"]:
+            embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
+            logger.info("[main] Embedding model loaded.")
+            accepted_jobs = run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp, run)
+            run["db"] = upsert_stage1_jobs(accepted_jobs)
+        else:
+            logger.info("[main] Stage 1 skipped (run_stage_1 is False).")
 
-    unique_jobs = []
-    if scraper_common_config["run_stage_1"]:
-        embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
-        logger.info("[main] Embedding model loaded.")
-        results = run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp)
-        accepted_lists = [accepted for accepted, _ in results.values()]
-        rejected_jobs = [job for _, rejected in results.values() for job in rejected]
-        unique_jobs, duplicate_jobs = merge_and_rank(accepted_lists)
-        save_csv(unique_jobs, JOB_CSV_COLUMNS, PROCESSED_FOLDER_PATH, f"title_ranked_jobs_{run_timestamp}.csv")
-        save_csv(duplicate_jobs, JOB_CSV_COLUMNS, DUPLICATES_FOLDER_PATH, f"duplicates_{run_timestamp}.csv")
-        new_count, seen_count = upsert_stage1_jobs(unique_jobs + rejected_jobs, run_timestamp)
-        logger.info(f"[main] Stage 1 done: {len(unique_jobs)} unique accepted jobs ({len(duplicate_jobs)} URL duplicates dropped); {new_count} URLs never seen before, {seen_count} seen in an earlier run.")
-    else:
-        logger.info("[main] Stage 1 skipped (run_stage_1 is False).")
-
-    ranked_rows = []
-    if scraper_common_config["run_stage_2"]:
-        run_description_scrapers(run_timestamp)
-        judge_pending_jobs(run_timestamp)
-        ranked_rows = [ranked_csv_row(job, run_timestamp) for job in ranked_jobs(stage2_config["llm"]["min_fit_score_to_report"])]
-        save_csv(ranked_rows, RANKED_CSV_COLUMNS, PROCESSED_FOLDER_PATH, f"ranked_jobs_{run_timestamp}.csv")
-    else:
-        logger.info("[main] Stage 2 skipped (run_stage_2 is False).")
-
-    logger.info(f"[main] DB totals: {status_counts()}")
-    duration_minutes = (time.time() - start) / 60
-    logger.info(f"[main] Pipeline complete in {duration_minutes:.2f} minutes.")
-
-    print("=" * 130)
-    if ranked_rows:
-        new_count = sum(1 for row in ranked_rows if row["is_new_this_run"])
-        print(f"FINAL RESULT: {len(ranked_rows)} jobs ranked by résumé fit ({new_count} first seen in this run)")
-        print(f"Saved to: {PROCESSED_FOLDER_PATH / f'ranked_jobs_{run_timestamp}.csv'}")
-        print("=" * 130)
-        for row in ranked_rows[:20]:
-            marker = "NEW" if row["is_new_this_run"] else "   "
-            print(f"{row['fit_score']:>3} {marker} {row['title']} | {row['company']} | {row['location']} | {row['job_posting_platform']}")
-            print(f"        {row['reason']}")
-            print(f"        {row['url']}")
-    else:
-        print(f"FINAL RESULT: {len(unique_jobs)} unique title-matched jobs, no résumé-ranked rows this run")
-        print("=" * 130)
-        pprint(unique_jobs[:20])
+        if scraper_common_config["run_stage_2"]:
+            run_description_scrapers(run_timestamp, run)
+            judged, failed = judge_pending_jobs()
+            run["judge"] = {"judged": judged, "failed": failed, "awaiting": len(jobs_pending_judge())}
+        else:
+            logger.info("[main] Stage 2 skipped (run_stage_2 is False).")
+    finally:
+        log_run_summary(run, run_timestamp, (time.time() - start) / 60)
+        log_db_summary()
 
 
 if __name__ == "__main__":

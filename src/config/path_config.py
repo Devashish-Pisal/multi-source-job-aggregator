@@ -3,15 +3,13 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SRC_FOLDER_PATH = PROJECT_ROOT / "src"
-CONFIG_FOLDER_PATH = SRC_FOLDER_PATH / "config"
 
 # Folders
 DATA_FOLDER_PATH = PROJECT_ROOT / "data"
 LOGS_FOLDER_PATH = PROJECT_ROOT / "logs"
-PROCESSED_FOLDER_PATH = DATA_FOLDER_PATH / "processed"
 RAW_FOLDER_PATH = DATA_FOLDER_PATH / "raw"
-DUPLICATES_FOLDER_PATH = DATA_FOLDER_PATH / "duplicates"
+REJECTED_FOLDER_PATH = DATA_FOLDER_PATH / "rejected"
+PROFILE_FOLDER_PATH = PROJECT_ROOT / "profile"
 
 # Files
 DATABASE_FILE_PATH = DATA_FOLDER_PATH / "database" / "app.db"

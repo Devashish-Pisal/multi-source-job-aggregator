@@ -3,12 +3,13 @@ xing_scraper_config = {
     "BASE_URL": "https://www.xing.com/jobs/search/ki?keywords={keywords}&location={location}&radius={radius}&sincePeriod={job_age}",
     "location_radius_pairs" : {
         # Allowed radius lengths for xing are : 0, 10, 20, 50, 70, 100, 200
-        # Non-overlapping tiles: only page 1 of each query is read, so nested circles return the same page again
-        "Mannheim": 20, # covers Ludwigshafen, Frankenthal, Weinheim, Viernheim, Schwetzingen
-        #"Heidelberg": 20, # covers Walldorf, Sandhausen
-        #"Speyer": 10, # covers Hockenheim, Schifferstadt, Limburgerhof
+        # non-overlapping tiles, only page 1 is read
+        "Mannheim": 50, # + Ludwigshafen, Weinheim, Schwetzingen
+        # step 2: add these once step 1 runs clean
+        #"Heidelberg": 20, # + Walldorf, Sandhausen
+        #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
-        # Inside a tile above; uncomment only if that tile saturates (page 1 full)
+        # inside a tile above, only if its page 1 is full
         #"Ludwigshafen am Rhein": 20,
         #"Walldorf": 20,
         #"Frankenthal": 10,
@@ -28,18 +29,18 @@ xing_scraper_config = {
         #"Frankfurt am Main": 20,
         #"Stuttgart": 20,
     },
-    "job_age": "LAST_MONTH", # Allowed values: LAST_24_HOURS, LAST_WEEK, LAST_MONTH. Weekly cadence: LAST_WEEK. Catch-up after a pause: LAST_MONTH
+    "job_age": "LAST_MONTH", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
 
-    # Selectors (both stages). Extraction logic stays in xing_scraper.py; only the strings live here.
+    # selectors
     "cookie_button": "button[data-action-type='accept'][id='accept']", # accept button
     "search_page": {
         "results_container": "div[class*='container__Container']",
         "cards": "div[class*='container__Container'] > div > ol[class*='results-styles'] > li > article[data-xds='Card']",
-        "card_link": "a", # the card's click overlay; title comes from its aria-label
+        "card_link": "a", # title is in its aria-label
     },
     "detail_page": {
         "wait_for": "main",
-        "description": ["[data-testid='job-description']", "main"], # guesses; 'main' is the noisy last resort
+        "description": ["[data-testid='job-description']", "main"], # 'main' is the noisy last resort
         "company": ["[data-testid='job-company-name']"],
         "location": ["[data-testid='job-location']"],
         "expired_signatures": ["nicht mehr verfügbar", "nicht mehr online", "ist abgelaufen", "no longer available", "wurde deaktiviert"],

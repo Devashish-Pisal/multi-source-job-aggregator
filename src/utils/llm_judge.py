@@ -1,40 +1,113 @@
 import json
 import os
 import re
-from datetime import datetime
+import sys
+import time
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from loguru import logger
-from openai import OpenAI, AuthenticationError, PermissionDeniedError, NotFoundError
+from openai import OpenAI, AuthenticationError, PermissionDeniedError, NotFoundError, RateLimitError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from config.path_config import PROJECT_ROOT
+from config.scraper_common_config import scraper_common_config
 from config.stage2_config import stage2_config
 from utils.db import jobs_pending_judge, save_verdict
 from utils.throttle import delay_between_llm_calls
 
-SYSTEM_PROMPT = """You screen job postings for one specific candidate: a university student in Germany looking for a student position (Werkstudent / Working Student, Praktikum / Internship or similar) in the field shown by the résumé below. Judge each posting using only the résumé and the posting text. Be strict about stated hard requirements and honest about gaps.
-
-fit_score guide (0-100):
-- 85-100: student-level position, topic squarely in the candidate's field, stated must-have requirements met.
-- 60-84: student-level position, topic close to the candidate's field, at most minor gaps.
-- 30-59: student-level position but the topic is off, or a hard requirement is clearly not met (e.g. fluent German required while the résumé shows none), or the level is doubtful.
-- 0-29: not a student position (regular full-time, senior, Ausbildung) or an unrelated field.
-
-Respond with a single JSON object and nothing else, with exactly these keys:
-- "fit_score": integer 0-100
-- "employment_type": one of "werkstudent", "praktikum", "thesis", "full_time", "other"
-- "level_ok": true if the posting is a student-level position the candidate can apply for
-- "language_requirement": one of "de", "en", "both", "unspecified" -- the working language(s) the posting asks for
-- "german_level": one of "none", "basic", "fluent" -- the German level the posting requires
-- "matched_skills": list of the candidate's skills that the posting asks for
-- "missing_must_haves": list of stated must-have requirements the résumé does not show
-- "hours_or_duration": hours per week, duration or start date if stated, else ""
-- "reason": at most two sentences explaining the score"""
-
-VERDICT_KEYS = {"fit_score", "employment_type", "level_ok", "language_requirement", "german_level", "matched_skills", "missing_must_haves", "hours_or_duration", "reason"}
+RESPONSE_FORMAT_MODES = ("json_schema", "json_object", None)
+THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.S)
 CODE_FENCE_PATTERN = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.S)
+
+
+def _lowercase(value):
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RequiredLanguage(StrictModel):
+    language: str
+    level: Literal["basic", "good", "fluent", "native", "unspecified"]
+
+    _lowercase_level = field_validator("level", mode="before")(_lowercase)
+
+
+class Requirements(StrictModel):
+    must_have: list[str]
+    nice_to_have: list[str]
+    tech_stack: list[str]
+    keywords: list[str]
+
+
+class RoleAndCompany(StrictModel):
+    responsibilities: list[str]
+    team: str
+    company_summary: str
+
+
+class Logistics(StrictModel):
+    start_date: str
+    duration: str
+    hours_per_week: str
+    work_model: Literal["onsite", "hybrid", "remote", "unspecified"]
+    salary: str
+    application_deadline: str
+
+    _lowercase_work_model = field_validator("work_model", mode="before")(_lowercase)
+
+
+class JobDetails(StrictModel):
+    requirements: Requirements
+    role: RoleAndCompany
+    logistics: Logistics
+
+
+class JobVerdict(StrictModel):
+    fit_score: int
+    employment_type: Literal["full_time", "part_time", "working_student", "internship", "thesis", "dual_study", "apprenticeship", "freelance", "other"]
+    level_ok: bool
+    required_languages: list[RequiredLanguage]
+    matched_skills: list[str]
+    missing_must_haves: list[str]
+    reason: str
+    details: JobDetails
+
+    _lowercase_employment_type = field_validator("employment_type", mode="before")(_lowercase)
+
+    @field_validator("fit_score", mode="before")
+    @classmethod
+    def clamp_fit_score(cls, value):
+        return max(0, min(100, round(float(value))))
+
+
+def strict_json_schema(model: type[BaseModel]) -> dict:
+    schema = model.model_json_schema()
+    definitions = schema.pop("$defs", {})
+
+    def inline(node):
+        if isinstance(node, list):
+            return [inline(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        if "$ref" in node:
+            return inline(definitions[node["$ref"].rsplit("/", 1)[-1]])
+        result = {}
+        for key, value in node.items():
+            if key == "title":
+                continue
+            result[key] = {name: inline(prop) for name, prop in value.items()} if key == "properties" else inline(value)
+        return result
+
+    return inline(schema)
+
+
+VERDICT_SCHEMA = strict_json_schema(JobVerdict)
 
 
 def load_llm_settings() -> tuple[OpenAI, str]:
@@ -47,17 +120,17 @@ def load_llm_settings() -> tuple[OpenAI, str]:
     return client, settings["LLM_MODEL"]
 
 
-def load_resume() -> str:
-    path = Path(stage2_config["resume_path"])
+def load_profile_text(config_key: str) -> str:
+    path = Path(stage2_config[config_key])
     if not path.is_file():
-        raise FileNotFoundError(f"résumé not found at {path} (plain text or markdown; path set by stage2_config['resume_path'])")
+        raise FileNotFoundError(f"{path} not found -- copy {path.with_name(path.stem + '.example.md')} to {path.name} and adapt it (path set by stage2_config['{config_key}'])")
     text = path.read_text(encoding="utf-8").strip()
     if not text:
-        raise ValueError(f"résumé file {path} is empty")
+        raise ValueError(f"{path} is empty")
     return text
 
 
-def build_messages(resume: str, job: dict) -> list[dict]:
+def build_messages(system_prompt: str, resume: str, job: dict) -> list[dict]:
     description = job["description"]
     max_chars = stage2_config["max_description_chars"]
     if len(description) > max_chars:
@@ -72,76 +145,94 @@ def build_messages(resume: str, job: dict) -> list[dict]:
         f"Source: {job['platform']} {job['url']}\n\n"
         f'Job description:\n"""\n{description}\n"""'
     )
-    system_content = f'{SYSTEM_PROMPT}\n\nCandidate résumé:\n"""\n{resume}\n"""'
+    system_content = f'{system_prompt}\n\nCandidate résumé:\n"""\n{resume}\n"""'
+    if stage2_config["llm"]["response_format"] != "json_schema":
+        system_content += f"\n\nRespond with one JSON object that matches this JSON schema:\n{json.dumps(VERDICT_SCHEMA, ensure_ascii=False)}"
     return [{"role": "system", "content": system_content}, {"role": "user", "content": user_content}]
 
 
-def parse_verdict(text: str) -> dict:
-    cleaned = CODE_FENCE_PATTERN.sub("", text.strip())
+def response_format_param(mode: str | None) -> dict | None:
+    if mode == "json_schema":
+        return {"type": "json_schema", "json_schema": {"name": "job_verdict", "schema": VERDICT_SCHEMA, "strict": True}}
+    if mode == "json_object":
+        return {"type": "json_object"}
+    return None
+
+
+def parse_verdict(text: str) -> JobVerdict:
+    cleaned = CODE_FENCE_PATTERN.sub("", THINK_BLOCK_PATTERN.sub("", text).strip())
     match = JSON_OBJECT_PATTERN.search(cleaned)
     if not match:
         raise ValueError(f"no JSON object in the model response: {text[:200]!r}")
-    verdict = json.loads(match.group(0))
-    missing = VERDICT_KEYS - verdict.keys()
-    if missing:
-        raise ValueError(f"verdict is missing keys {sorted(missing)}")
-    verdict["fit_score"] = max(0, min(100, round(float(verdict["fit_score"]))))
-    level_ok = verdict["level_ok"]
-    verdict["level_ok"] = level_ok.strip().lower() in ("true", "yes", "1") if isinstance(level_ok, str) else bool(level_ok)
-    for key in ("employment_type", "language_requirement", "german_level"):
-        verdict[key] = str(verdict[key] or "").strip().lower()
-    for key in ("matched_skills", "missing_must_haves"):
-        value = verdict[key]
-        verdict[key] = [str(v) for v in value] if isinstance(value, list) else ([str(value)] if value else [])
-    for key in ("hours_or_duration", "reason"):
-        verdict[key] = str(verdict[key] or "").strip()
-    return verdict
+    try:
+        return JobVerdict.model_validate_json(match.group(0))
+    except ValidationError as exc:
+        problems = "; ".join(f"{'.'.join(str(part) for part in error['loc']) or 'reply'}: {error['msg']}" for error in exc.errors()[:3])
+        raise ValueError(f"verdict does not match the schema ({exc.error_count()} errors): {problems}") from None
 
 
-def judge_job(client: OpenAI, model: str, resume: str, job: dict) -> dict:
+def judge_job(client: OpenAI, model: str, system_prompt: str, resume: str, job: dict) -> dict:
     llm = stage2_config["llm"]
-    kwargs = {"model": model, "messages": build_messages(resume, job)}
+    kwargs = {"model": model, "messages": build_messages(system_prompt, resume, job)}
     if llm["temperature"] is not None:
         kwargs["temperature"] = llm["temperature"]
     if llm["max_tokens"] is not None:
         kwargs["max_tokens"] = llm["max_tokens"]
-    if llm["use_json_response_format"]:
-        kwargs["response_format"] = {"type": "json_object"}
+    response_format = response_format_param(llm["response_format"])
+    if response_format:
+        kwargs["response_format"] = response_format
     completion = client.chat.completions.create(**kwargs)
     choice = completion.choices[0]
-    if choice.finish_reason == "length":
-        logger.warning(f"[LLM Judge] Response for {job['url']} was cut off at max_tokens={llm['max_tokens']}")
     if completion.usage:
         logger.debug(f"[LLM Judge] Tokens: prompt={completion.usage.prompt_tokens} completion={completion.usage.completion_tokens}")
-    return parse_verdict(choice.message.content or "")
+    if choice.finish_reason == "length":
+        raise ValueError(f"response cut off at max_tokens={llm['max_tokens']} (raise stage2_config['llm']['max_tokens'])")
+    return parse_verdict(choice.message.content or "").model_dump()
 
 
-def judge_pending_jobs(run_timestamp: str) -> list[dict]:
+def judge_with_rate_limit_pauses(client: OpenAI, model: str, system_prompt: str, resume: str, job: dict) -> dict:
+    llm = stage2_config["llm"]
+    for attempt in range(llm["rate_limit_retries"] + 1):
+        try:
+            return judge_job(client, model, system_prompt, resume, job)
+        except RateLimitError:
+            if attempt == llm["rate_limit_retries"]:
+                raise
+            logger.info(f"[LLM Judge] Rate limit hit, pausing {llm['rate_limit_pause_seconds']} s before retrying '{job['title']}'")
+            time.sleep(llm["rate_limit_pause_seconds"])
+
+
+def judge_pending_jobs() -> tuple[list[dict], int]:
     llm = stage2_config["llm"]
     judged = []
+    failed = 0
     try:
+        if llm["response_format"] not in RESPONSE_FORMAT_MODES:
+            raise ValueError(f"stage2_config['llm']['response_format'] must be one of {RESPONSE_FORMAT_MODES}, not {llm['response_format']!r}")
         client, model = load_llm_settings()
-        resume = load_resume()
+        system_prompt = load_profile_text("system_prompt_path")
+        resume = load_profile_text("resume_path")
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         logger.error(f"[LLM Judge] Skipping the judge pass: {exc}")
-        return judged
-    pending = jobs_pending_judge(model, llm["rejudge_when_model_changes"])
+        return judged, failed
+    pending = jobs_pending_judge()
     logger.info(f"[LLM Judge] {len(pending)} descriptions to judge with '{model}' at {client.base_url}")
     consecutive_failures = 0
     try:
         for index, job in enumerate(pending):
             try:
-                verdict = judge_job(client, model, resume, job)
+                verdict = judge_with_rate_limit_pauses(client, model, system_prompt, resume, job)
                 verdict_json = json.dumps(verdict, ensure_ascii=False)
-                save_verdict(job["url_key"], model, verdict["fit_score"], verdict_json, run_timestamp)
-                job.update(judge_model=model, fit_score=verdict["fit_score"], judge_json=verdict_json, judge_run=run_timestamp)
+                save_verdict(job["id"], model, verdict["fit_score"], verdict_json)
+                job.update(judge_model=model, fit_score=verdict["fit_score"], judge_json=verdict_json)
                 judged.append(job)
-                logger.info(f"[LLM Judge] fit={verdict['fit_score']:>3} level_ok={verdict['level_ok']} '{job['title']}' at '{job.get('company')}' -- {verdict['reason']} | URL: {job['url']}")
+                logger.info(f"[LLM Judge] fit={verdict['fit_score']:>3} level_ok={verdict['level_ok']} type={verdict['employment_type']} '{job['title']}' at '{job.get('company')}' -- {verdict['reason']} | URL: {job['url']}")
                 consecutive_failures = 0
             except (AuthenticationError, PermissionDeniedError, NotFoundError) as exc:
                 logger.error(f"[LLM Judge] Aborting the judge pass -- the provider rejected the configuration ({type(exc).__name__}: {exc}). Check LLM_BASE_URL, LLM_API_KEY and LLM_MODEL in .env; {len(pending) - index} jobs stay pending.")
                 break
             except Exception as exc:
+                failed += 1
                 consecutive_failures += 1
                 error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
                 logger.warning(f"[LLM Judge] Judging failed ({consecutive_failures}/{llm['max_consecutive_failures']} consecutive): {error} | '{job['title']}' | URL: {job['url']}")
@@ -153,8 +244,10 @@ def judge_pending_jobs(run_timestamp: str) -> list[dict]:
             logger.info(f"[LLM Judge] Judge pass complete: {len(judged)} of {len(pending)} descriptions judged.")
     except KeyboardInterrupt:
         logger.warning(f"[LLM Judge] Interrupted -- {len(judged)} verdicts saved so far are kept.")
-    return judged
+    return judged, failed
 
 
 if __name__ == "__main__":
-    judge_pending_jobs(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    logger.remove()
+    logger.add(sys.stderr, level=scraper_common_config["log_level"])
+    judge_pending_jobs()
