@@ -26,7 +26,7 @@ SCRAPER_CLASSES = {
 }
 
 JOB_CSV_COLUMNS = ["title", "url", "title_score", "matched_keyword", "platform"]
-DESCRIPTION_CSV_COLUMNS = ["id", "title", "url", "platform", "description_status", "original_id", "match", "dedup_key", "description_source", "company", "location", "employment_type", "date_posted", "description_chars"]
+DESCRIPTION_CSV_COLUMNS = ["id", "title", "url", "platform", "description_status", "original_id", "note", "dedup_key", "description_source", "company", "location", "employment_type", "date_posted", "description_chars"]
 STAGE2_STATUS_LABELS = {"ok": "ok", "duplicate": "duplicate", "expired": "expired", "failed": "failed", "pending": "retry next run"}
 DIVIDER = "=" * 100
 TOP_N = 20
@@ -64,7 +64,7 @@ def run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp: str, ru
             logger.exception(f"[main] '{name}' scraper failed -- saving what it collected before the failure and continuing with the remaining sources.")
         accepted, rejected = scraper.query_matched_emb_accepted_jobs, scraper.query_matched_emb_rejected_jobs
         accepted_jobs += accepted
-        run["yield"] += scraper.query_yield
+        run["yield"] += [dict(entry, source=name, location=entry["location"].split(",")[0].strip()) for entry in scraper.query_yield]
         run["stage1"][name] = {"outcome": outcome, "accepted": len(accepted), "rejected": len(rejected), "untitled": sum(1 for job in rejected if job["title"] is None)}
         run["files"] += [save_csv(accepted, JOB_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_jobs_{run_timestamp}.csv"),
                          save_csv(rejected, JOB_CSV_COLUMNS, REJECTED_FOLDER_PATH, f"{name}_rejected_{run_timestamp}.csv")]
@@ -114,6 +114,17 @@ def yield_by(entries: list[dict], field: str) -> list[tuple[str, int, int]]:
     return sorted(((value, found[value], only[value]) for value in {entry[field] for entry in entries}), key=lambda row: (-row[2], -row[1], row[0]))
 
 
+def yield_table(entries: list[dict], field: str) -> list[str]:
+    sources = list(dict.fromkeys(entry["source"] for entry in entries))
+    per_source = {}
+    for entry in entries:
+        per_source.setdefault((entry[field], entry["source"]), set()).update(entry["accepted_urls"])
+    lines = [f"  {field:<34}" + "".join(f"{source[:12]:>14}" for source in sources) + f"{'total':>7}{'only':>6}"]
+    for value, found, only in yield_by(entries, field):
+        lines.append(f"  {value:<34}" + "".join(f"{len(per_source.get((value, source), ())):>14}" for source in sources) + f"{found:>7}{only:>6}")
+    return lines
+
+
 def log_job_lines(jobs: list[dict]) -> None:
     for job in jobs:
         logger.info(f"  {job['fit_score']:>3} | {job['title']} | {job['company']} | {job['location']} | {job['platform']}")
@@ -134,12 +145,14 @@ def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
         logger.info(f"Stage 1 | {name:<13} | {stats['outcome']:<11} | accepted {stats['accepted']:>3} | rejected {stats['rejected']:>3}{untitled}")
     if run["db"]:
         logger.info(f"Stage 1 | database      | {run['db'][0]} new jobs, {run['db'][1]} already known")
+    for source in dict.fromkeys(entry["source"] for entry in run["yield"]):
+        results = [entry["results"] for entry in run["yield"] if entry["source"] == source]
+        logger.info(f"Stage 1 | {source:<13} | page 1 results per query: avg {sum(results) / len(results):.0f}, max {max(results)}, empty {results.count(0)} of {len(results)}")
     for field in ("keyword", "location"):
-        rows = yield_by(run["yield"], field)
-        if rows:
-            logger.info(f"Stage 1 | {field} yield (accepted jobs | found by no other {field}):")
-            for value, found, only in rows:
-                logger.info(f"  {value:<40} {found:>4} | {only:>4}")
+        if run["yield"]:
+            logger.info(f"Stage 1 | {field} yield (accepted jobs per site | total | found by no other {field}):")
+            for line in yield_table(run["yield"], field):
+                logger.info(line)
     if not scraper_common_config["run_stage_2"]:
         logger.info("Stage 2 | skipped (run_stage_2 is False)")
     for name, stats in run["stage2"].items():
@@ -147,7 +160,9 @@ def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
         logger.info(f"Stage 2 | {name:<13} | {stats['outcome']:<11} | {stats['visited']} detail pages{': ' + counts if counts else ''}")
     if run["judge"]:
         judge = run["judge"]
-        logger.info(f"Judge   | {len(judge['judged'])} judged, {judge['failed']} failed, {judge['awaiting']} awaiting a verdict")
+        failed = f" ({judge['failed']} failed calls)" if judge["failed"] else ""
+        stopped = f" -- stopped early: {judge['stop_reason']}" if judge["stop_reason"] else ""
+        logger.info(f"Judge   | {len(judge['judged'])} judged, {judge['awaiting']} awaiting a verdict{failed}{stopped}")
         top = sorted(judge["judged"], key=lambda job: job["fit_score"], reverse=True)[:TOP_N]
         if top:
             logger.info(f"Top {len(top)} jobs judged in this run (fit | title | company | location | platform):")
@@ -194,8 +209,8 @@ def main():
 
         if scraper_common_config["run_stage_2"]:
             run_description_scrapers(run_timestamp, run)
-            judged, failed = judge_pending_jobs()
-            run["judge"] = {"judged": judged, "failed": failed, "awaiting": len(jobs_pending_judge())}
+            judged, failed, stop_reason = judge_pending_jobs()
+            run["judge"] = {"judged": judged, "failed": failed, "stop_reason": stop_reason, "awaiting": len(jobs_pending_judge())}
         else:
             logger.info("[main] Stage 2 skipped (run_stage_2 is False).")
     finally:

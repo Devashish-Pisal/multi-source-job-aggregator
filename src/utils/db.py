@@ -1,13 +1,14 @@
 import json
+import re
 import sqlite3
 from contextlib import closing
-from datetime import date
+from datetime import date, timedelta
 
 from loguru import logger
 
 from config import path_config
 from config.stage2_config import stage2_config
-from deduplication.normalize import normalize_title, normalize_company, normalize_location, normalize_description, build_dedup_key, tidy_text, description_similarity
+from deduplication.normalize import normalize_title, normalize_company, normalize_location, normalize_description, build_dedup_key, tidy_text, description_containment
 from utils.util import normalize_job_url
 
 SCHEMA_VERSION = 3 # bump on schema changes
@@ -37,6 +38,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_platform_status ON jobs (platform, descripti
 CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs (dedup_key);
 """
 FIT_BUCKETS = ["85-100", "60-84", "30-59", "0-29"]
+
+
+def _stale_cutoff() -> str:
+    return (date.today() - timedelta(days=stage2_config["max_posting_age_days"])).isoformat()
 
 
 def _connect() -> sqlite3.Connection:
@@ -79,7 +84,11 @@ def upsert_stage1_jobs(jobs: list[dict]) -> tuple[int, int]:
                 new_count += 1
             else:
                 known_count += 1
-                conn.execute("UPDATE jobs SET description_status = 'pending', description_attempts = 0 WHERE url = ? AND description_status IN ('expired', 'failed')", (url,))
+                conn.execute(
+                    """UPDATE jobs SET description_status = 'pending', description_attempts = 0
+                       WHERE url = ? AND (description_status = 'failed' OR (description_status = 'expired' AND (date_posted IS NULL OR date_posted >= ?)))""",
+                    (url, _stale_cutoff()),
+                ) # stale postings stay expired
         conn.commit()
     return new_count, known_count
 
@@ -99,21 +108,22 @@ def _find_original(conn: sqlite3.Connection, job_id: int, dedup_key: str | None,
     exact = conn.execute("SELECT id FROM jobs WHERE dedup_key = ? AND id != ? AND description_status = 'ok' ORDER BY id LIMIT 1", (dedup_key, job_id)).fetchone()
     if exact:
         return exact["id"], "same key"
-    prefix = f"{company_key}|"
-    best_id, best_score = None, stage2_config["dedup"]["description_similarity"]
-    candidates = conn.execute("SELECT id, description FROM jobs WHERE substr(dedup_key, 1, ?) = ? AND id != ? AND description_status = 'ok'", (len(prefix), prefix, job_id))
+    first_word = dedup_key.split("|")[0].split()[0] # Döhler and Döhler Group share it
+    best_id, best_score = None, stage2_config["dedup"]["description_containment"]
+    candidates = conn.execute("SELECT id, dedup_key, description FROM jobs WHERE substr(dedup_key, 1, ?) = ? AND id != ? AND description_status = 'ok'", (len(first_word), first_word, job_id))
     for candidate in candidates:
-        score = description_similarity(description, candidate["description"])
+        if candidate["dedup_key"].split("|")[0].split()[0] != first_word:
+            continue
+        score = description_containment(description, candidate["description"])
         if score >= best_score:
             best_id, best_score = candidate["id"], score
-    return (best_id, f"same company, description similarity {best_score:.2f}") if best_id else (None, None)
+    return (best_id, f"same company, description overlap {best_score:.2f}") if best_id else (None, None)
 
 
 def save_description(job_id: int, fields: dict) -> dict:
     stored = {
-        "company": tidy_text(fields.get("company")) or None,
+        "company": re.sub(r"(?i)^jobs bei\s+", "", tidy_text(fields.get("company"))) or None, # StudySmarter page label
         "location": normalize_location(fields.get("location")) or None,
-        "employment_type": (fields.get("employment_type") or "").lower() or None,
         "date_posted": fields.get("date_posted"),
         "description": normalize_description(fields["description"]),
         "description_source": fields["description_source"],
@@ -123,16 +133,27 @@ def save_description(job_id: int, fields: dict) -> dict:
         row = conn.execute("SELECT url, title, other_urls FROM jobs WHERE id = ?", (job_id,)).fetchone()
         stored["dedup_key"] = build_dedup_key(company_key, normalize_title(row["title"]), stored["location"])
         original_id, match = _find_original(conn, job_id, stored["dedup_key"], company_key, stored["description"])
-        if original_id:
+        stale = stored["date_posted"] is not None and stored["date_posted"] < _stale_cutoff()
+        if stale:
+            stored["description_status"] = "expired"
+            stored["note"] = f"posted {(date.today() - date.fromisoformat(stored['date_posted'])).days} days ago, too old to judge"
+            conn.execute(
+                """UPDATE jobs SET company = :company, location = :location, date_posted = :date_posted, description = :description,
+                       description_source = :description_source, dedup_key = :dedup_key, description_status = 'expired',
+                       description_attempts = description_attempts + 1
+                   WHERE id = :id""",
+                {**stored, "id": job_id},
+            )
+        elif original_id:
             original_urls = json.loads(conn.execute("SELECT other_urls FROM jobs WHERE id = ?", (original_id,)).fetchone()[0])
             merged_urls = list(dict.fromkeys(original_urls + [row["url"]] + json.loads(row["other_urls"])))
             conn.execute("UPDATE jobs SET other_urls = ? WHERE id = ?", (json.dumps(merged_urls), original_id))
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-            stored.update(description_status="duplicate", original_id=original_id, match=match)
+            stored.update(description_status="duplicate", original_id=original_id, note=f"duplicate of job #{original_id} ({match}); URL kept on it, row not stored")
         else:
             stored["description_status"] = "ok"
             conn.execute(
-                """UPDATE jobs SET company = :company, location = :location, employment_type = :employment_type, date_posted = :date_posted,
+                """UPDATE jobs SET company = :company, location = :location, date_posted = :date_posted,
                        description = :description, description_source = :description_source, dedup_key = :dedup_key,
                        description_status = 'ok', description_attempts = description_attempts + 1
                    WHERE id = :id""",
@@ -158,13 +179,13 @@ def record_description_failure(job_id: int, max_attempts: int) -> str:
 
 def jobs_pending_judge() -> list[dict]:
     with closing(_connect()) as conn:
-        rows = conn.execute("SELECT * FROM jobs WHERE description_status = 'ok' AND judge_model IS NULL ORDER BY title_score DESC, id").fetchall()
+        rows = conn.execute("SELECT * FROM jobs WHERE description_status = 'ok' AND judge_model IS NULL ORDER BY date_posted DESC NULLS LAST, title_score DESC, id").fetchall()
     return [dict(row) for row in rows]
 
 
-def save_verdict(job_id: int, model: str, fit_score: int, judge_json: str) -> None:
+def save_verdict(job_id: int, model: str, fit_score: int, employment_type: str, judge_json: str) -> None:
     with closing(_connect()) as conn:
-        conn.execute("UPDATE jobs SET judge_model = ?, fit_score = ?, judge_json = ? WHERE id = ?", (model, fit_score, judge_json, job_id))
+        conn.execute("UPDATE jobs SET judge_model = ?, fit_score = ?, employment_type = ?, judge_json = ? WHERE id = ?", (model, fit_score, employment_type, judge_json, job_id))
         conn.commit()
 
 

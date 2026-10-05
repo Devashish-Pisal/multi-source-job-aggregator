@@ -15,7 +15,19 @@ def html_to_text(html: str) -> str:
     text = unescape(text).replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"(?m)^-\n+(?=\S)", "- ", text) # <li><p> left the dash on its own line
+    text = re.sub(r"(?m)^(- .+)\n\n(?=- )", r"\1\n", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def drop_junk_lines(text: str, detail: dict) -> str:
+    junk = {line.lower() for line in detail.get("junk_lines", [])}
+    lines = [line for line in text.split("\n") if line.strip().lstrip("-• ").lower() not in junk and line.strip() not in ("-", "•")]
+    for marker in detail.get("footer_markers", []):
+        starts = [index for index, line in enumerate(lines) if line.strip() == marker]
+        if starts and len("\n".join(lines[starts[-1]:])) < 300:
+            lines = lines[:starts[-1]]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def _find_job_posting(data):

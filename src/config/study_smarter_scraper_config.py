@@ -5,7 +5,7 @@ sss_config = {
         # Allowed radius lengths for study smarter are : 1, 10, 20, 30, 40, 50
         # non-overlapping tiles, only page 1 is read
         "Mannheim": 40, # + Ludwigshafen, Weinheim, Schwetzingen
-        # step 2: add these once step 1 runs clean
+        # inside the Mannheim circle; add one only if the run summary shows full first pages
         #"Heidelberg": 20, # + Walldorf, Sandhausen
         #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
@@ -45,6 +45,8 @@ sss_config = {
         "description": ["[class*='job-description']", "[class*='c-job-detail']", "main"], # 'main' is the noisy last resort
         "company": ["[class*='c-job-detail__company']"],
         "location": ["[class*='c-job-detail__location']"],
+        "junk_lines": ["Impressum"],
+        "footer_markers": [],
         "expired_signatures": ["nicht mehr verfügbar", "no longer available", "page not found", "seite nicht gefunden", "ist abgelaufen"],
     },
 }

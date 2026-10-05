@@ -18,12 +18,18 @@ scraper_common_config = {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
         "threshold": 0.43, # to filter non-relevant (or less relevant) job listings
     },
-    # title must contain one of these words, [] turns it off
+    # title must contain one of these words, [] turns it off; a trailing * also matches longer forms
     "title_required_words": [
-        "werkstudent", "werkstudentin", "werkstudenten", "werkstudierende", "working student",
-        "praktikum", "pflichtpraktikum", "praktikant", "praktikantin", "praktika", "praxissemester",
-        "intern", "internship", "thesis", "abschlussarbeit", "masterarbeit", "bachelorarbeit", "masterand",
-        "studentische", "student", "studenten",
+        "werkstudent*", "werkstudierende*", "working student", "working students",
+        "praktik*", "pflichtpraktik*", "praxissemester",
+        "intern", "interns", "internship*",
+        "thesis", "masterthesis", "bachelorthesis", "abschlussarbeit", "masterarbeit", "bachelorarbeit", "masterand*", "bachelorand*",
+        "studentisch*", "student", "students", "studentin", "studenten", "hiwi", "hilfskraft",
+    ],
+    # titles with one of these words are rejected, [] turns it off
+    "title_excluded_words": [
+        "sales", "vertrieb", "kundenservice", "customer support", "customer service", "business development", "key account",
+        "phd", "doktorand*", "initiativbewerbung", "unsolicited", "schülerpraktikum", "orientierungspraktikum", "chief of staff",
     ],
     "throttle_config": {
         # delay ranges in seconds
@@ -40,23 +46,16 @@ scraper_common_config = {
     # sent to the sites; each one costs a page load per location, so keep it short
     "search_keywords": [
         "Werkstudent KI",
-        "Werkstudent Machine Learning",
         "Werkstudent Data Science",
         "Werkstudent Data Analytics",
         "Werkstudent Data Engineering",
-        "Praktikum KI",
-        "Praktikum Machine Learning",
+        "Werkstudent Automatisierung",
+        "Werkstudent Digitalisierung",
         "Praktikum Data Science",
         "Praktikum Data Analytics",
         "Praktikum Data Engineering",
-        "Working Student AI",
-        "Working Student Machine Learning",
-        "Working Student Data Science",
-        "Working Student Data Analytics",
         "Working Student Data Engineering",
         "Intern AI",
-        "Intern Machine Learning",
-        "Intern Data Science",
     ],
 
     # titles are scored against these topics (never sent to a site)

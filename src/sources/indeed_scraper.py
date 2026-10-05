@@ -17,11 +17,11 @@ from utils.util import (
     find_best_matching_keyword,
     load_embedding_model_and_keyword_embeddings,
     detect_block_page,
-    has_required_title_word,
+    title_rejection_reason,
 )
 from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
-from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page
+from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines
 
 INDEED_EXPIRED_PATTERN = re.compile("|".join(re.escape(s.lower()) for s in indeed_scraper_config["detail_page"]["expired_signatures"]))
 
@@ -133,7 +133,10 @@ class IndeedScraper:
                             for i in range(card_count):
                                 card = cards.nth(i)
                                 job_id = card.get_attribute("data-jk")
-                                if job_id:
+                                href = card.get_attribute("href") or ""
+                                if job_id and not href.startswith("/rc/clk?"): # ads and decoy cards link elsewhere
+                                    logger.debug(f"[Indeed Scraper] Skipping card {job_id} ({href[:20]})")
+                                elif job_id:
                                     full_url = f"https://de.indeed.com/viewjob?jk={job_id}"
                                     title = self.extract_title(card)
                                     if title:
@@ -141,7 +144,7 @@ class IndeedScraper:
                                         best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
                                         max_sim = round(max_sim, 4)
                                         best_matching_keyword = match_keywords[best_index]
-                                        if max_sim >= threshold and has_required_title_word(title):
+                                        if not title_rejection_reason(title, max_sim, threshold):
                                             query_accepted.append(full_url)
                                             if full_url not in accepted_job_urls:
                                                 accepted_job_urls.add(full_url)
@@ -149,12 +152,12 @@ class IndeedScraper:
                                         elif full_url not in rejected_job_urls:
                                             rejected_job_urls.add(full_url)
                                             rejected_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, best_matching_keyword, "indeed"))
-                                            logger.debug(f"[Indeed Scraper] Rejecting '{title}' ({'below threshold' if max_sim < threshold else 'no required title word'}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
+                                            logger.debug(f"[Indeed Scraper] Rejecting '{title}' ({title_rejection_reason(title, max_sim, threshold)}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
                                     elif full_url not in accepted_job_urls and full_url not in rejected_job_urls:
                                         logger.warning(f"[Indeed Scraper] Could not extract a title for {full_url} -- saved to the rejected CSV without a score.")
                                         rejected_job_urls.add(full_url)
                                         rejected_jobs.append(get_emb_match_job_dict(None, full_url, None, None, "indeed"))
-                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted})
+                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted, "results": 0 if empty_result else card_count})
                         logger.debug(f"[Indeed Scraper] '{keyword}' in {location}: {len(query_accepted)} accepted")
                         consecutive_failures = 0
                     except Exception as exc:
@@ -232,9 +235,10 @@ class IndeedScraper:
                                 fields["location"] = first_inner_text(page, detail["location"])
                             if not fields["description"]:
                                 raise ValueError("no description found (no JSON-LD JobPosting and the CSS fallback matched nothing)")
+                            fields["description"] = drop_junk_lines(fields["description"], detail)
                             job.update(save_description(job["id"], fields))
-                            duplicate = f" -- duplicate of job #{job['original_id']} ({job['match']}); URL kept on it, row not stored" if job.get("original_id") else ""
-                            logger.info(f"[Indeed Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{duplicate} | URL: {url}")
+                            note = f" -- {job['note']}" if job.get("note") else ""
+                            logger.info(f"[Indeed Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{note} | URL: {url}")
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1

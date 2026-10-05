@@ -17,12 +17,12 @@ from utils.util import (
     find_best_matching_keyword,
     load_embedding_model_and_keyword_embeddings,
     detect_block_page,
-    has_required_title_word,
+    title_rejection_reason,
     normalize_job_url,
 )
 from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
-from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page
+from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines
 
 STUDY_SMARTER_EXPIRED_PATTERN = re.compile("|".join(re.escape(s.lower()) for s in sss_config["detail_page"]["expired_signatures"]))
 
@@ -134,7 +134,7 @@ class StudySmarterScraper:
                                     best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
                                     max_sim = round(max_sim, 4)
                                     best_matching_keyword = match_keywords[best_index]
-                                    if max_sim >= threshold and has_required_title_word(title):
+                                    if not title_rejection_reason(title, max_sim, threshold):
                                         query_accepted.append(href)
                                         if href not in accepted_job_urls:
                                             accepted_job_urls.add(href)
@@ -142,8 +142,8 @@ class StudySmarterScraper:
                                     elif href not in rejected_job_urls:
                                         rejected_job_urls.add(href)
                                         rejected_jobs.append(get_emb_match_job_dict(title, href, max_sim, best_matching_keyword, "study_smarter"))
-                                        logger.debug(f"[Studysmarter Scraper] Rejecting '{title}' ({'below threshold' if max_sim < threshold else 'no required title word'}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={href}")
-                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted})
+                                        logger.debug(f"[Studysmarter Scraper] Rejecting '{title}' ({title_rejection_reason(title, max_sim, threshold)}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={href}")
+                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted, "results": cards.count() if card_visible else 0})
                         logger.debug(f"[Studysmarter Scraper] '{keyword}' in {location}: {len(query_accepted)} accepted")
                         consecutive_failures = 0
                     except Exception as exc:
@@ -221,9 +221,10 @@ class StudySmarterScraper:
                                 fields["location"] = first_inner_text(page, detail["location"])
                             if not fields["description"]:
                                 raise ValueError("no description found (no JSON-LD JobPosting and the CSS fallback matched nothing)")
+                            fields["description"] = drop_junk_lines(fields["description"], detail)
                             job.update(save_description(job["id"], fields))
-                            duplicate = f" -- duplicate of job #{job['original_id']} ({job['match']}); URL kept on it, row not stored" if job.get("original_id") else ""
-                            logger.info(f"[Studysmarter Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{duplicate} | URL: {url}")
+                            note = f" -- {job['note']}" if job.get("note") else ""
+                            logger.info(f"[Studysmarter Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{note} | URL: {url}")
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1

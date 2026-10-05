@@ -17,12 +17,12 @@ from utils.util import (
     find_best_matching_keyword,
     load_embedding_model_and_keyword_embeddings,
     detect_block_page,
-    has_required_title_word,
+    title_rejection_reason,
     normalize_job_url,
 )
 from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
-from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page
+from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines
 
 XING_EXPIRED_PATTERN = re.compile("|".join(re.escape(s.lower()) for s in xing_scraper_config["detail_page"]["expired_signatures"]))
 
@@ -133,13 +133,16 @@ class XingScraper:
                                 href = card_anchor.get_attribute("href")
                                 if href:
                                     full_url = normalize_job_url(urljoin("https://www.xing.com/", href))
+                                    if not full_url.startswith("https://www.xing.com/"): # external tracking links
+                                        logger.debug(f"[Xing Scraper] Skipping external card {full_url[:60]}")
+                                        continue
                                     title = self.extract_title(card_anchor)
                                     if title:
                                         job_title_emb = compute_embedding(self.embedding_model, title)
                                         best_index, max_sim = find_best_matching_keyword(self.keywords_embeddings, job_title_emb)
                                         max_sim = round(max_sim, 4)
                                         best_matching_keyword = match_keywords[best_index]
-                                        if max_sim >= threshold and has_required_title_word(title):
+                                        if not title_rejection_reason(title, max_sim, threshold):
                                             query_accepted.append(full_url)
                                             if full_url not in accepted_job_urls:
                                                 accepted_job_urls.add(full_url)
@@ -147,12 +150,12 @@ class XingScraper:
                                         elif full_url not in rejected_job_urls:
                                             rejected_job_urls.add(full_url)
                                             rejected_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, best_matching_keyword, "xing"))
-                                            logger.debug(f"[Xing Scraper] Rejecting '{title}' ({'below threshold' if max_sim < threshold else 'no required title word'}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
+                                            logger.debug(f"[Xing Scraper] Rejecting '{title}' ({title_rejection_reason(title, max_sim, threshold)}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
                                     elif full_url not in accepted_job_urls and full_url not in rejected_job_urls:
                                         logger.warning(f"[Xing Scraper] Could not extract a title for {full_url} -- saved to the rejected CSV without a score.")
                                         rejected_job_urls.add(full_url)
                                         rejected_jobs.append(get_emb_match_job_dict(None, full_url, None, None, "xing"))
-                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted})
+                        self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted, "results": card_count})
                         logger.debug(f"[Xing Scraper] '{keyword}' in {location}: {len(query_accepted)} accepted")
                         consecutive_failures = 0
                     except Exception as exc:
@@ -230,9 +233,10 @@ class XingScraper:
                                 fields["location"] = first_inner_text(page, detail["location"])
                             if not fields["description"]:
                                 raise ValueError("no description found (no JSON-LD JobPosting and the CSS fallback matched nothing)")
+                            fields["description"] = drop_junk_lines(fields["description"], detail)
                             job.update(save_description(job["id"], fields))
-                            duplicate = f" -- duplicate of job #{job['original_id']} ({job['match']}); URL kept on it, row not stored" if job.get("original_id") else ""
-                            logger.info(f"[Xing Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{duplicate} | URL: {url}")
+                            note = f" -- {job['note']}" if job.get("note") else ""
+                            logger.info(f"[Xing Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{note} | URL: {url}")
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1

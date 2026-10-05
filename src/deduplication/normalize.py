@@ -9,9 +9,10 @@ GENDER_TAG_PATTERN = re.compile(
     r"|\b(?:" + "|".join(re.escape(w) for w in sorted(GENDER_NOISE_WORDS, key=len, reverse=True)) + r")\b"
 )
 LEGAL_FORMS_PATTERN = re.compile(
-    r"\b(?:gmbh|mbh|ag|se|kgaa|kg|ohg|gbr|ug|haftungsbeschränkt|e v|ev|ltd|limited|inc|llc|plc|corp|co|deutschland|germany)\b"
+    r"\b(?:gmbh|mbh|ag|se|kgaa|kg|ohg|gbr|ug|haftungsbeschränkt|e v|ev|ltd|limited|inc|llc|plc|corp|co|deutschland|germany|group|gruppe|holding)\b"
 )
-NO_CITY = {"bundesweit", "deutschlandweit", "deutschland", "germany", "remote", "home office", "homeoffice"}
+NO_CITY = {"bundesweit", "deutschlandweit", "deutschland", "germany", "remote", "home office", "homeoffice", "home-office", "mobile office", "mobiles arbeiten"}
+FOLD = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 
 def clean_invisible(text: str) -> str:
@@ -71,7 +72,7 @@ def normalize_description(description: str) -> str:
 def build_dedup_key(company: str | None, title: str | None, location: str | None) -> str | None:
     if not company or not title:
         return None
-    return f"{company}|{title}|{first_city(location)}"
+    return f"{company}|{title}|{first_city(location)}".translate(FOLD) # nußloch = nussloch
 
 
 def _shingles(text: str, size: int = 5) -> set[str]:
@@ -79,6 +80,6 @@ def _shingles(text: str, size: int = 5) -> set[str]:
     return {" ".join(words[i:i + size]) for i in range(max(len(words) - size + 1, 1))}
 
 
-def description_similarity(first: str, second: str) -> float:
+def description_containment(first: str, second: str) -> float:
     first_shingles, second_shingles = _shingles(first), _shingles(second)
-    return len(first_shingles & second_shingles) / len(first_shingles | second_shingles)
+    return len(first_shingles & second_shingles) / min(len(first_shingles), len(second_shingles)) # a short teaser inside the full ad counts

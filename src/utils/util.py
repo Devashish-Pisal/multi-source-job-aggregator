@@ -55,13 +55,33 @@ NOISE_WORDS_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(w) for w in sorted(NOISE_WORDS, key=len, reverse=True)) + r")\b"
 )
 GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]-?in(?:nen)?\b")  # praktikant/in, werkstudent:in, entwickler*innen
-TITLE_REQUIRED_WORDS_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(w.lower()) for w in sorted(scraper_common_config["title_required_words"], key=len, reverse=True)) + r")\b"
-) if scraper_common_config["title_required_words"] else None
+def title_words_pattern(words: list[str]) -> re.Pattern | None:
+    if not words:
+        return None
+    parts = [re.escape(w.lower()[:-1]) + r"\w*" if w.endswith("*") else re.escape(w.lower()) for w in sorted(words, key=len, reverse=True)]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b") # "praktik*" also matches praktikum, praktikanten
+
+
+TITLE_REQUIRED_WORDS_PATTERN = title_words_pattern(scraper_common_config["title_required_words"])
+TITLE_EXCLUDED_WORDS_PATTERN = title_words_pattern(scraper_common_config["title_excluded_words"])
 
 
 def has_required_title_word(title: str) -> bool:
     return TITLE_REQUIRED_WORDS_PATTERN is None or bool(TITLE_REQUIRED_WORDS_PATTERN.search(title.lower()))
+
+
+def has_excluded_title_word(title: str) -> bool:
+    return TITLE_EXCLUDED_WORDS_PATTERN is not None and bool(TITLE_EXCLUDED_WORDS_PATTERN.search(title.lower()))
+
+
+def title_rejection_reason(title: str, score: float, threshold: float) -> str | None:
+    if score < threshold:
+        return "below threshold"
+    if not has_required_title_word(title):
+        return "no required title word"
+    if has_excluded_title_word(title):
+        return "excluded title word"
+    return None
 
 
 def clean_search_keywords_and_job_title(text: str) -> str:
@@ -143,8 +163,8 @@ def find_best_matching_keyword(keywords_embeddings, job_title_emb) -> tuple[int,
 
 
 def normalize_job_url(url: str) -> str:
-    parsed = urlparse(url.strip())
-    filtered_query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not k.startswith("utm_") and k not in ("fbclid", "gclid")]
+    parsed = urlparse(re.sub(r"[­​‌‍⁠﻿]", "", url.strip()))
+    filtered_query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not k.startswith("utm_") and k not in ("fbclid", "gclid", "ijt")] # ijt = xing tracking
     normalized = parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), query=urlencode(filtered_query), fragment="")
     return urlunparse(normalized)
 

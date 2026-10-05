@@ -6,7 +6,7 @@ indeed_scraper_config = {
         # non-overlapping tiles, only page 1 is read
         "Mannheim, Baden-Württemberg": 40, # + Ludwigshafen, Viernheim, Schwetzingen
         # "Heidelberg, Baden-Württemberg": 15, # + Walldorf, Sandhausen
-        # step 2: add these once step 1 runs clean
+        # inside the Mannheim circle; add one only if the run summary shows full first pages
         #"Speyer, Rheinland-Pfalz": 10, # + Hockenheim, Schifferstadt
         #"Worms, Rheinland-Pfalz": 10,
         #"Weinheim, Baden-Württemberg": 10, # edge of the Mannheim tile
@@ -46,6 +46,8 @@ indeed_scraper_config = {
         "description": ["[data-testid='viewjob-job-content']", "#jobDescriptionText"], # first match wins
         "company": ["[data-testid='inlineHeader-companyName']", "[data-company-name='true']"],
         "location": ["[data-testid='inlineHeader-companyLocation']", "[data-testid='job-location']"],
+        "junk_lines": [],
+        "footer_markers": [],
         "expired_signatures": ["stellenanzeige ist abgelaufen", "job has expired", "nicht mehr verfügbar", "no longer available"], # lowercase
     },
 }

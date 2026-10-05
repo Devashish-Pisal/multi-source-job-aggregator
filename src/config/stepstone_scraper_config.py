@@ -5,7 +5,7 @@ stepstone_scraper_config = {
         # Allowed radius lengths for stepstone are : 5, 10, 20, 30, 40, 50, 75, 100
         # non-overlapping tiles, only page 1 is read
         "Mannheim": 40, # + Ludwigshafen, Weinheim, Schwetzingen
-        # step 2: add these once step 1 runs clean
+        # inside the Mannheim circle; add one only if the run summary shows full first pages
         #"Heidelberg": 20, # + Walldorf, Sandhausen
         #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
@@ -44,6 +44,8 @@ stepstone_scraper_config = {
         "description": ["[data-at='job-ad-content']"],
         "company": ["[data-at='header-company-name']"],
         "location": ["[data-at='metadata-location']"],
+        "junk_lines": [],
+        "footer_markers": [],
         "expired_signatures": ["nicht mehr verfügbar", "nicht mehr aktiv", "ist abgelaufen", "no longer available", "wurde deaktiviert"],
     },
 }

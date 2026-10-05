@@ -36,18 +36,18 @@ Each scraper can be switched on or off with the `use_<site>_scraper` knobs in `s
 **Stage 1 – title search**
 
 1. For every enabled site, `location tiles × search keywords` search URLs are built, shuffled and visited one by one in a persistent Google Chrome profile (real Chrome, cookies kept between runs, human-like random delays and scrolling).
-2. Only the first results page of each query is read. Every job title on it is cleaned (employment type, gender tags and contract words stripped), embedded with `BAAI/bge-m3` and compared against the `match_keywords` vocabulary — this measures the *topic*. A title is accepted when its score reaches `embedding_match_config.threshold` **and**, if `title_required_words` is set, it contains one of those words — this checks the *level* (e.g. Werkstudent / Praktikum / Thesis), which the topic score cannot see. Everything else goes to `data/rejected/` so you can tune both.
+2. Only the first results page of each query is read. Every job title on it is cleaned (employment type, gender tags and contract words stripped), embedded with `BAAI/bge-m3` and compared against the `match_keywords` vocabulary — this measures the *topic*. A title is accepted when its score reaches `embedding_match_config.threshold`, it contains one of the `title_required_words` (this checks the *level* — e.g. Werkstudent / Praktikum / Thesis — which the topic score cannot see) and none of the `title_excluded_words` (fields you never want, e.g. sales or customer support). Everything else goes to `data/rejected/` so you can tune all three.
 3. Accepted jobs are stored in `data/database/app.db`: title, URL (stored once), platform, title score, and the date the job was added. A URL that is already in the database — as a job or as a folded duplicate — is not added again.
 
 **Stage 2 – description, de-duplication and judge**
 
-4. For every stored job without a description (best title score first, at most `max_detail_pages_per_platform` per site and run) the posting page is opened in the same Chrome profile. Company, location, employment type, posting date and description come from the page's `JobPosting` JSON-LD block, with CSS selectors as fallback. Expired postings are marked and skipped; every page is saved immediately.
+4. For every stored job without a description (best title score first, at most `max_detail_pages_per_platform` per site and run) the posting page is opened in the same Chrome profile. Company, location, posting date and description come from the page's `JobPosting` JSON-LD block, with CSS selectors as fallback; board clutter (apply buttons, footers) is removed. Expired postings — and postings older than `max_posting_age_days` (60), which some boards keep listing for years — are marked expired and never judged. Every page is saved immediately.
 5. **De-duplication.** Title and company are stored exactly as the posting writes them; the location is stored normalised (lowercase, postcodes removed). For matching, title and company are normalised too (lowercase, gender tags such as "(m/w/d)", legal forms such as "GmbH & Co. KG" and "Deutschland" dropped), giving a readable key such as `io consultants|werkstudent data analytics simulation|heidelberg`. A posting is the same job as a stored one when
    - the key is identical (the same job re-posted, or posted on two boards under the same title), or
-   - the company matches and the two descriptions are near-identical (word 5-gram similarity ≥ `dedup.description_similarity`, default 0.70) — this catches copies whose title wording or city order differs, while different jobs of the same company (which share boilerplate) stay apart.
+   - the company matches (same first word, so "Döhler" and "Döhler Group" count as one) and at least `dedup.description_containment` (90%) of the shorter description's word sequences appear in the other — this catches copies whose title wording or city order differs, and short teaser versions of a full ad, while different jobs of the same company (which share boilerplate) stay apart.
 
    A duplicate is not stored: its row is dropped and its URL is added to the kept job's `other_urls`, so it is never scraped again and you can see every board the job is posted on.
-6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Every job is judged once.
+6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Every job is judged once, newest postings first. If the provider's daily token limit is reached, the judge stops at once and the rest stays pending for the next run (or run `python src/utils/llm_judge.py` later).
 7. The log ends with a **run summary** (what this run did, how many jobs each search keyword and location found — and how many no other one found —, the best jobs it judged) and a **database summary** (totals, fit-score buckets, the best jobs overall).
 
 Safety valves: a single failing query or page is skipped, not fatal; a site that starts blocking (CAPTCHA / "access denied" page, or several failures in a row) trips a circuit breaker that aborts *that* scraper and keeps what it had collected; a posting page that fails twice is left alone until it shows up in a search again; the judge stops on a bad API key or model name and after several failed calls in a row; `Ctrl-C` keeps everything saved so far.
@@ -96,9 +96,9 @@ PYTHONPATH=src python src/utils/llm_judge.py
 
 Job boards notice sudden bursts of traffic, so grow the search in steps:
 
-1. Start with all `search_keywords` and one location per site (the default).
-2. After a run or two, check the keyword yield in the run summary. A keyword whose second number stays at 0 only finds jobs other keywords find as well — drop it.
-3. Then add the location tiles marked `step 2` in each `src/config/<site>_scraper_config.py`, and check the location yield the same way.
+1. Start with your `search_keywords` and one location per site with a generous radius (the default: Mannheim, 40–50 km).
+2. After a run or two, check the keyword yield table in the run summary (accepted jobs per site, total, and how many no other keyword found). A keyword whose last number stays at 0 only finds jobs other keywords find as well — drop it.
+3. Check "page 1 results per query" per site. Only page 1 is read, so if queries fill their first page, add a smaller location inside the circle (the commented entries in each `src/config/<site>_scraper_config.py`) for those searches; if they don't, more locations add nothing.
 
 ## Adapting the project to you
 
@@ -110,7 +110,8 @@ Nothing about your situation is hard-coded. These are the places to change:
 | Your résumé | `profile/resume.md` (plain text or markdown — you control exactly what the judge sees) |
 | What is searched on the sites | `search_keywords` in `src/config/scraper_common_config.py` — keep it short, every entry costs one page load per location tile |
 | What titles are scored against | `match_keywords` in the same file — never sent to a site, so it can be broad (niche phrasings, other languages) |
-| Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). `[]` switches it off |
+| Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). A trailing `*` also matches longer forms (`praktik*` → Praktikum, Praktikantin, Praktika). `[]` switches it off |
+| Which fields are never wanted | `title_excluded_words` — titles containing one of these words are rejected (e.g. sales, customer support, PhD). `[]` switches it off |
 | Which words are ignored when comparing titles | `EMPLOYMENT_NOISE_WORDS` (Werkstudent, Praktikum, Intern, …), `CONTRACT_NOISE_WORDS` and `GENDER_NOISE_WORDS` in `src/utils/util.py`. Because employment words are stripped, "Werkstudent Data Science" and "Data Science" embed identically — put topics, not employment types, into `match_keywords`; let the judge decide the level |
 | Where | `location_radius_pairs` in each `src/config/<site>_scraper_config.py` (non-overlapping tiles; allowed radii are listed in each file) |
 | How fresh | `job_age` in each site config (weekly and catch-up values are in each file's comment) |
@@ -127,7 +128,7 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `run_stage_1`, `run_stage_2` | run the title search / the description + judge stage |
 | `log_level` | `DEBUG`, `INFO`, `WARNING`, … for the console and the log file (browser page errors and failed tracker requests only show at `DEBUG`) |
 | `browser_profile_path` | persistent Chrome profile directory |
-| `search_keywords`, `match_keywords`, `title_required_words` | see [Adapting the project to you](#adapting-the-project-to-you) |
+| `search_keywords`, `match_keywords`, `title_required_words`, `title_excluded_words` | see [Adapting the project to you](#adapting-the-project-to-you) |
 | `embedding_match_config` | sentence-embedding model and the acceptance `threshold` |
 | `throttle_config` | random delay ranges between queries, interactions, page loads and sources, plus scroll behaviour |
 | `circuit_breaker.max_consecutive_failures` | failed queries or pages in a row before a scraper aborts |
@@ -153,7 +154,8 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `max_description_attempts` | failed page loads before a URL is given up on |
 | `max_description_chars` | longer descriptions are cut before judging |
 | `throttle.between_detail_pages` | random delay between posting pages |
-| `dedup.description_similarity` | how similar two descriptions of the same company must be to count as one job (0–1; raise it if different jobs get merged) |
+| `max_posting_age_days` | postings older than this (by their own posting date) are marked expired and not judged |
+| `dedup.description_containment` | share of the shorter description that must appear in the other for two ads of the same company to count as one job (0–1; raise it if different jobs get merged) |
 | `llm.temperature`, `llm.max_tokens` | request parameters; `None` omits one (some reasoning models reject `temperature`) |
 | `llm.response_format` | `"json_schema"` (the provider enforces the verdict schema), `"json_object"` or `None` for providers that reject the stricter modes; the reply is validated either way |
 | `llm.timeout_seconds`, `llm.max_consecutive_failures`, `llm.delay_between_calls` | judge pass safety valves |
@@ -168,8 +170,8 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `data/database/app.db` | **the result**: one row per job, see below |
 | log (`logs/<timestamp>.log` and the console) | everything that happened, ending with the run summary and the database summary; log files are kept 15 days |
 | `data/raw/<source>_jobs_<timestamp>.csv` | accepted titles of that source in this run, with score and closest keyword |
-| `data/rejected/<source>_rejected_<timestamp>.csv` | rejected titles: a score below the threshold means "off topic", a score at or above it means "no required title word"; an empty title means the card could not be read — use these to tune the threshold and the word lists |
-| `data/raw/<source>_descriptions_<timestamp>.csv` | posting pages visited in this run: status (`duplicate` rows show `original_id` and why they matched — they are not in the database), extraction path (`json_ld` / `css`), company, location, de-duplication key, description length |
+| `data/rejected/<source>_rejected_<timestamp>.csv` | rejected titles: a score below the threshold means "off topic", a score at or above it means the title has no required word or an excluded one; an empty title means the card could not be read — use these to tune the threshold and the word lists |
+| `data/raw/<source>_descriptions_<timestamp>.csv` | posting pages visited in this run: status (`duplicate` rows show `original_id` and a `note` on why they matched — they are not in the database; stale postings say how old they are), extraction path (`json_ld` / `css`), company, location, de-duplication key, description length |
 
 A CSV with no rows is not written.
 
@@ -186,9 +188,10 @@ A CSV with no rows is not written.
 | `location` | normalised: lowercase, postcodes dropped |
 | `title_score` | stage-1 similarity to the closest `match_keywords` entry |
 | `date_added` | date the job entered the database (`YYYY-MM-DD`) |
-| `employment_type`, `date_posted` | from the posting's metadata (`date_posted` as `YYYY-MM-DD`) |
+| `employment_type` | the judge's classification (full_time, working_student, internship, …); empty until judged — the boards' own metadata is too unreliable |
+| `date_posted` | the posting's own date (`YYYY-MM-DD`) |
 | `description`, `description_source` | posting text and where it came from (`json_ld` / `css`) |
-| `description_status` | `pending` → `ok`, or `expired`, `failed` |
+| `description_status` | `pending` → `ok`, or `expired` (removed, or older than `max_posting_age_days`), `failed` |
 | `description_attempts` | page loads so far |
 | `dedup_key` | `normalised company\|title\|first city` |
 | `judge_model`, `fit_score`, `judge_json` | the verdict |
@@ -220,13 +223,13 @@ WHERE description_status = 'ok' AND fit_score >= 70 AND json_extract(judge_json,
 ORDER BY date_added DESC, fit_score DESC;
 ```
 
-To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 2. If two different jobs were merged, raise `dedup.description_similarity` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
+To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 2. If two different jobs were merged, raise `dedup.description_containment` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
 
 ## Tuning
 
 **Title threshold.** Stage 1 is a cheap pre-filter: recall matters more than precision, because a false positive only costs one page load and one judge call, while a false negative loses the job. After a run, sort `data/rejected/*.csv` by `title_score`. If relevant titles sit below the threshold, lower it to just under the lowest relevant one; the run summary shows what that costs in extra pages and judge calls. Improving `match_keywords` (more topic phrasings) usually helps more than moving the threshold. The default 0.43 comes from the first runs: every job the judge rated 60+ scored above 0.50, and relevant titles that were rejected went down to 0.434.
 
-**Level words.** The topic score cannot tell "Werkstudent Data Engineering" from "Senior Data Engineer" — employment words are stripped before comparing. `title_required_words` does that job: in the first runs, every accepted title without a student word was rated 20 or lower by the judge. Rejected rows whose score is above the threshold were dropped by this list; if one of them should have passed, add its word.
+**Level words.** The topic score cannot tell "Werkstudent Data Engineering" from "Senior Data Engineer" — employment words are stripped before comparing. `title_required_words` does that job: in the first runs, every accepted title without a student word was rated 20 or lower by the judge. Rejected rows whose score is above the threshold were dropped by this list or by `title_excluded_words`; if one of them should have passed, adjust the word lists.
 
 **Fit-score cut-off.** After two or three runs, read the `reason` of jobs scoring around 50–75 and pick the score above which you would apply to most of them — or simply take the top N per week that you have time for. Filter on `level_ok` as well (see the SQL above). Check the cut-off again whenever you change the score guide in `profile/system_prompt.md`.
 
@@ -236,14 +239,15 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 - **A site's circuit breaker trips** — the site is blocking. Raise the delays in `throttle_config` / `throttle.between_detail_pages`, or run that site less often.
 - **The judge fails with HTTP 400 about the response format** — the provider or model does not support JSON schemas; set `llm.response_format` to `"json_object"` (or `None`).
 - **"response cut off at max_tokens"** — reasoning models spend tokens on thinking; raise `llm.max_tokens`.
-- **Frequent "Rate limit hit" pauses** — the provider's tokens-per-minute limit is reached. Every call counts its prompt (instructions + résumé + description) plus `llm.max_tokens`, so a shorter résumé, a lower `max_description_chars` or a lower `max_tokens` (if replies stay below it) all help; so does a paid tier.
+- **"daily token limit reached"** — free tiers cap tokens per day (Groq: 200k for `gpt-oss-120b`, roughly 50 judged jobs). The jobs stay pending; run `python src/utils/llm_judge.py` the next day, or use a paid tier.
+- **Frequent "Rate limit hit" waits** — the provider's tokens-per-minute limit is reached; the judge waits as long as the provider asks. Every call counts its prompt (instructions + résumé + description) plus `llm.max_tokens`, so a shorter résumé, a lower `max_description_chars` or a lower `max_tokens` (if replies stay below it) all help; so does a paid tier.
 - **"has schema version N, this code expects M"** — the database layout changed; move the old `data/database/app.db` aside and a fresh one is created on the next run.
 - **Need more detail** — set `log_level` to `"DEBUG"` (shows throttling, browser page errors, failed requests, token usage).
 
 ## Roadmap
 
 - Track application status per job.
-- Wire "newest first" sorting for Xing, Stepstone and StudySmarter (Indeed already sorts by date), and add per-query yield logging to find saturated or useless queries.
+- Wire "newest first" sorting for Xing, Stepstone and StudySmarter (Indeed already sorts by date).
 - Pagination, if page 1 turns out to be too little.
 - More sources (e.g. job APIs).
 
