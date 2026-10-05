@@ -3,8 +3,10 @@ import os
 import re
 import sys
 import time
+from itertools import count
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -18,12 +20,14 @@ from utils.db import jobs_pending_judge, save_verdict
 from utils.throttle import delay_between_llm_calls
 
 RESPONSE_FORMAT_MODES = ("json_schema", "json_object", None)
+REQUEST_KEYS = ("temperature", "max_tokens", "response_format") # what per_model may override
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.S)
 CODE_FENCE_PATTERN = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.S)
 PLACEHOLDER = r"unspecified|not specified|not stated|not mentioned|n/?a|none|unknown|nicht angegeben|keine angabe"
 PLACEHOLDER_FULL = re.compile(rf"\s*(?:{PLACEHOLDER})\.?\s*", re.I)
 PLACEHOLDER_PAREN = re.compile(rf"\s*\((?:{PLACEHOLDER})\)", re.I)
+DAILY_LIMIT_PATTERN = re.compile(r"per[ -]day|daily", re.I) # groq "tokens per day", openrouter "free-models-per-day"
 
 
 class DailyLimitReached(Exception):
@@ -58,16 +62,32 @@ class Requirements(StrictModel):
     nice_to_have: list[str]
     tech_stack: list[str]
     keywords: list[str]
+    education: list[str]
+    soft_skills: list[str]
+    experience: str
 
-    _blank = field_validator("must_have", "nice_to_have", "tech_stack", "keywords", mode="before")(_blank_placeholders)
+    _blank = field_validator("must_have", "nice_to_have", "tech_stack", "keywords", "education", "soft_skills", "experience", mode="before")(_blank_placeholders)
 
 
 class RoleAndCompany(StrictModel):
     responsibilities: list[str]
     team: str
     company_summary: str
+    projects: list[str]
+    learning: list[str]
+    prospects: str
 
-    _blank = field_validator("responsibilities", "team", "company_summary", mode="before")(_blank_placeholders)
+    _blank = field_validator("responsibilities", "team", "company_summary", "projects", "learning", "prospects", mode="before")(_blank_placeholders)
+
+
+class Company(StrictModel):
+    industry: str
+    products: list[str]
+    values: list[str]
+    size: str
+    benefits: list[str]
+
+    _blank = field_validator("industry", "products", "values", "size", "benefits", mode="before")(_blank_placeholders)
 
 
 class Logistics(StrictModel):
@@ -85,6 +105,7 @@ class Logistics(StrictModel):
 class JobDetails(StrictModel):
     requirements: Requirements
     role: RoleAndCompany
+    company: Company
     logistics: Logistics
 
 
@@ -131,14 +152,39 @@ def strict_json_schema(model: type[BaseModel]) -> dict:
 VERDICT_SCHEMA = strict_json_schema(JobVerdict)
 
 
-def load_llm_settings() -> tuple[OpenAI, str]:
+def request_settings(model: str) -> dict:
+    llm = stage2_config["llm"]
+    override = llm["per_model"].get(model, {})
+    unknown = set(override) - set(REQUEST_KEYS)
+    if unknown:
+        raise ValueError(f"stage2_config['llm']['per_model']['{model}'] has unknown keys {sorted(unknown)}, allowed: {', '.join(REQUEST_KEYS)}")
+    settings = {key: override.get(key, llm[key]) for key in REQUEST_KEYS}
+    if settings["response_format"] not in RESPONSE_FORMAT_MODES:
+        raise ValueError(f"response_format for '{model}' must be one of {RESPONSE_FORMAT_MODES}, not {settings['response_format']!r}")
+    return settings
+
+
+def load_judges() -> list[dict]:
     load_dotenv(PROJECT_ROOT / ".env")
-    settings = {name: os.environ.get(name) for name in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")}
-    missing = [name for name, value in settings.items() if not value]
-    if missing:
-        raise RuntimeError(f"{', '.join(missing)} not set in {PROJECT_ROOT / '.env'}")
-    client = OpenAI(base_url=settings["LLM_BASE_URL"], api_key=settings["LLM_API_KEY"], timeout=stage2_config["llm"]["timeout_seconds"], max_retries=0) # we handle 429s ourselves
-    return client, settings["LLM_MODEL"]
+    judges = []
+    for number in count(1):
+        prefix = "LLM_" if number == 1 else f"LLM_{number}_" # LLM_*, then LLM_2_*, LLM_3_*, ...
+        names = [prefix + name for name in ("BASE_URL", "API_KEY", "MODEL")]
+        base_url, api_key, models = (os.environ.get(name) for name in names)
+        if number > 1 and not base_url:
+            break
+        missing = [name for name, value in zip(names, (base_url, api_key, models)) if not value]
+        if missing:
+            raise RuntimeError(f"{', '.join(missing)} not set in {PROJECT_ROOT / '.env'}")
+        client = OpenAI(base_url=base_url, api_key=api_key, timeout=stage2_config["llm"]["timeout_seconds"], max_retries=0) # we handle 429s ourselves
+        for model in filter(None, (name.strip() for name in models.split(","))):
+            judges.append({"client": client, "model": model, "settings": request_settings(model), "provider": urlparse(base_url).netloc, "env": prefix + "*"})
+    if not judges:
+        raise RuntimeError(f"LLM_MODEL in {PROJECT_ROOT / '.env'} names no model")
+    unmatched = set(stage2_config["llm"]["per_model"]) - {judge["model"] for judge in judges}
+    if unmatched:
+        logger.warning(f"[LLM Judge] stage2_config['llm']['per_model'] names models that are not in .env: {', '.join(sorted(unmatched))}")
+    return judges
 
 
 def load_profile_text(config_key: str) -> str:
@@ -151,7 +197,7 @@ def load_profile_text(config_key: str) -> str:
     return text
 
 
-def build_messages(system_prompt: str, resume: str, job: dict) -> list[dict]:
+def build_messages(system_prompt: str, resume: str, job: dict, response_format: str | None) -> list[dict]:
     description = job["description"]
     max_chars = stage2_config["max_description_chars"]
     if len(description) > max_chars:
@@ -166,7 +212,7 @@ def build_messages(system_prompt: str, resume: str, job: dict) -> list[dict]:
         f'Job description:\n"""\n{description}\n"""'
     )
     system_content = f'{system_prompt}\n\nCandidate résumé:\n"""\n{resume}\n"""'
-    if stage2_config["llm"]["response_format"] != "json_schema":
+    if response_format != "json_schema":
         system_content += f"\n\nRespond with one JSON object that matches this JSON schema:\n{json.dumps(VERDICT_SCHEMA, ensure_ascii=False)}"
     return [{"role": "system", "content": system_content}, {"role": "user", "content": user_content}]
 
@@ -191,29 +237,34 @@ def parse_verdict(text: str) -> JobVerdict:
         raise ValueError(f"verdict does not match the schema ({exc.error_count()} errors): {problems}") from None
 
 
-def judge_job(client: OpenAI, model: str, system_prompt: str, resume: str, job: dict) -> dict:
-    llm = stage2_config["llm"]
-    kwargs = {"model": model, "messages": build_messages(system_prompt, resume, job)}
-    if llm["temperature"] is not None:
-        kwargs["temperature"] = llm["temperature"]
-    if llm["max_tokens"] is not None:
-        kwargs["max_tokens"] = llm["max_tokens"]
-    response_format = response_format_param(llm["response_format"])
+def judge_job(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
+    settings = judge["settings"]
+    kwargs = {"model": judge["model"], "messages": build_messages(system_prompt, resume, job, settings["response_format"])}
+    if settings["temperature"] is not None:
+        kwargs["temperature"] = settings["temperature"]
+    if settings["max_tokens"] is not None:
+        kwargs["max_tokens"] = settings["max_tokens"]
+    response_format = response_format_param(settings["response_format"])
     if response_format:
         kwargs["response_format"] = response_format
-    completion = client.chat.completions.create(**kwargs)
+    completion = judge["client"].chat.completions.create(**kwargs)
     choice = completion.choices[0]
     if completion.usage:
         logger.debug(f"[LLM Judge] Tokens: prompt={completion.usage.prompt_tokens} completion={completion.usage.completion_tokens}")
     if choice.finish_reason == "length":
-        raise ValueError(f"response cut off at max_tokens={llm['max_tokens']} (raise stage2_config['llm']['max_tokens'])")
+        raise ValueError(f"response cut off at max_tokens={settings['max_tokens']} (raise it in stage2_config['llm'], or for this model in 'per_model')")
     return parse_verdict(choice.message.content or "").model_dump()
 
 
 def rate_limit_wait(exc: RateLimitError) -> float | None:
-    retry_after = exc.response.headers.get("retry-after") if exc.response is not None else None
+    headers = exc.response.headers if exc.response is not None else {}
     try:
-        return float(retry_after)
+        return float(headers.get("retry-after"))
+    except (TypeError, ValueError):
+        pass
+    try:
+        reset = float(headers.get("x-ratelimit-reset"))
+        return max(0.0, reset / 1000 - time.time()) if reset > 1e12 else reset # openrouter sends epoch ms
     except (TypeError, ValueError):
         pass
     match = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s", str(exc))
@@ -223,20 +274,29 @@ def rate_limit_wait(exc: RateLimitError) -> float | None:
     return None
 
 
-def judge_with_rate_limit_pauses(client: OpenAI, model: str, system_prompt: str, resume: str, job: dict) -> dict:
+def judge_with_rate_limit_pauses(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
     llm = stage2_config["llm"]
     for attempt in range(llm["rate_limit_retries"] + 1):
         try:
-            return judge_job(client, model, system_prompt, resume, job)
+            return judge_job(judge, system_prompt, resume, job)
         except RateLimitError as exc:
             wait = rate_limit_wait(exc)
-            if "per day" in str(exc).lower() or (wait or 0) > llm["rate_limit_max_wait_seconds"]:
+            if DAILY_LIMIT_PATTERN.search(str(exc)) or (wait or 0) > llm["rate_limit_max_wait_seconds"]:
                 raise DailyLimitReached(str(exc).strip().splitlines()[0]) from None
             if attempt == llm["rate_limit_retries"]:
                 raise
             wait = llm["rate_limit_pause_seconds"] if wait is None else wait
-            logger.info(f"[LLM Judge] Rate limit hit, waiting {wait:.0f} s as asked, then retrying '{job['title']}'")
+            logger.info(f"[LLM Judge] Rate limit hit on '{judge['model']}', waiting {wait:.0f} s as asked, then retrying '{job['title']}'")
             time.sleep(wait + 1)
+
+
+def next_judge(judges: list[dict], current: int, reason: str, detail: str, used_up: dict) -> int:
+    judge = judges[current]
+    used_up.setdefault(reason, []).append(judge["model"])
+    following = f"switching to '{judges[current + 1]['model']}' ({judges[current + 1]['provider']})" if current + 1 < len(judges) else "no model left"
+    hint = f"; check {judge['env']} in .env" if reason == "rejected" else ""
+    logger.warning(f"[LLM Judge] '{judge['model']}' ({judge['provider']}): {reason} ({detail}){hint} -- {following}")
+    return current + 1
 
 
 def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
@@ -245,44 +305,50 @@ def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
     failed = 0
     stop_reason = None
     try:
-        if llm["response_format"] not in RESPONSE_FORMAT_MODES:
-            raise ValueError(f"stage2_config['llm']['response_format'] must be one of {RESPONSE_FORMAT_MODES}, not {llm['response_format']!r}")
-        client, model = load_llm_settings()
+        judges = load_judges()
         system_prompt = load_profile_text("system_prompt_path")
         resume = load_profile_text("resume_path")
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         logger.error(f"[LLM Judge] Skipping the judge pass: {exc}")
         return judged, failed, f"skipped: {exc}"
     pending = jobs_pending_judge()
-    logger.info(f"[LLM Judge] {len(pending)} descriptions to judge with '{model}' at {client.base_url}")
+    overrides = {judge["model"]: "".join(f", {key} {value}" for key, value in stage2_config["llm"]["per_model"].get(judge["model"], {}).items()) for judge in judges}
+    logger.info(f"[LLM Judge] {len(pending)} descriptions to judge; models in order: " + ", ".join(f"'{judge['model']}' ({judge['provider']}{overrides[judge['model']]})" for judge in judges))
+    current = 0
+    used_up = {}
     consecutive_failures = 0
     try:
         for job in pending:
-            try:
-                verdict = judge_with_rate_limit_pauses(client, model, system_prompt, resume, job)
+            while current < len(judges): # same job again after a switch
+                judge = judges[current]
+                try:
+                    verdict = judge_with_rate_limit_pauses(judge, system_prompt, resume, job)
+                except DailyLimitReached as exc:
+                    current = next_judge(judges, current, "daily limit", str(exc), used_up)
+                    continue
+                except (AuthenticationError, PermissionDeniedError, NotFoundError) as exc:
+                    current = next_judge(judges, current, "rejected", f"{type(exc).__name__}: {str(exc).strip().splitlines()[0]}", used_up)
+                    continue
+                except Exception as exc:
+                    failed += 1
+                    consecutive_failures += 1
+                    error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+                    logger.warning(f"[LLM Judge] Judging failed on '{judge['model']}' ({consecutive_failures}/{llm['max_consecutive_failures']} in a row): {error} | '{job['title']}' | URL: {job['url']}")
+                    if consecutive_failures >= llm["max_consecutive_failures"]:
+                        current = next_judge(judges, current, "failing", f"{consecutive_failures} failures in a row", used_up)
+                        consecutive_failures = 0
+                    break # this job stays pending
                 verdict_json = json.dumps(verdict, ensure_ascii=False)
-                save_verdict(job["id"], model, verdict["fit_score"], verdict["employment_type"], verdict_json)
-                job.update(judge_model=model, fit_score=verdict["fit_score"], employment_type=verdict["employment_type"], judge_json=verdict_json)
+                save_verdict(job["id"], judge["model"], verdict["fit_score"], verdict["employment_type"], verdict_json)
+                job.update(judge_model=judge["model"], fit_score=verdict["fit_score"], employment_type=verdict["employment_type"], judge_json=verdict_json)
                 judged.append(job)
                 logger.info(f"[LLM Judge] fit={verdict['fit_score']:>3} level_ok={verdict['level_ok']} type={verdict['employment_type']} '{job['title']}' at '{job.get('company')}' -- {verdict['reason']} | URL: {job['url']}")
                 consecutive_failures = 0
-            except (AuthenticationError, PermissionDeniedError, NotFoundError) as exc:
-                stop_reason = "the provider rejected the configuration"
-                logger.error(f"[LLM Judge] Aborting the judge pass -- {stop_reason} ({type(exc).__name__}: {exc}). Check LLM_BASE_URL, LLM_API_KEY and LLM_MODEL in .env; {len(pending) - len(judged)} jobs stay pending.")
                 break
-            except DailyLimitReached as exc:
-                stop_reason = "daily token limit reached"
-                logger.error(f"[LLM Judge] Stopping the judge pass -- {stop_reason} ({exc}). {len(pending) - len(judged)} jobs stay pending; run `python src/utils/llm_judge.py` once the limit resets.")
+            if current == len(judges):
+                stop_reason = "every model is used up (" + "; ".join(f"{reason}: {', '.join(models)}" for reason, models in used_up.items()) + ")"
+                logger.error(f"[LLM Judge] Stopping the judge pass -- {stop_reason}. {len(pending) - len(judged)} jobs stay pending; run `python src/utils/llm_judge.py` once a limit resets.")
                 break
-            except Exception as exc:
-                failed += 1
-                consecutive_failures += 1
-                error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
-                logger.warning(f"[LLM Judge] Judging failed ({consecutive_failures}/{llm['max_consecutive_failures']} consecutive): {error} | '{job['title']}' | URL: {job['url']}")
-                if consecutive_failures >= llm["max_consecutive_failures"]:
-                    stop_reason = f"{consecutive_failures} failures in a row"
-                    logger.error(f"[LLM Judge] Aborting the judge pass after {stop_reason}; {len(pending) - len(judged)} jobs stay pending for the next run.")
-                    break
             delay_between_llm_calls(stage2_config)
         else:
             logger.info(f"[LLM Judge] Judge pass complete: {len(judged)} of {len(pending)} descriptions judged.")

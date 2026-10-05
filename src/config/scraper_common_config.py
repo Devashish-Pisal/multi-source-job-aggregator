@@ -25,11 +25,13 @@ scraper_common_config = {
         "intern", "interns", "internship*",
         "thesis", "masterthesis", "bachelorthesis", "abschlussarbeit", "masterarbeit", "bachelorarbeit", "masterand*", "bachelorand*",
         "studentisch*", "student", "students", "studentin", "studenten", "hiwi", "hilfskraft",
+        "junior", "trainee*", "graduate*", "absolvent*", "einsteiger*", "berufseinsteiger*", "direkteinst*", "entry level", "entry-level", "young professional*",
     ],
     # titles with one of these words are rejected, [] turns it off
     "title_excluded_words": [
         "sales", "vertrieb", "kundenservice", "customer support", "customer service", "business development", "key account",
         "phd", "doktorand*", "initiativbewerbung", "unsolicited", "schülerpraktikum", "orientierungspraktikum", "chief of staff",
+        "buchhalt*", "einkäufer*", "recruiter*", "recruiting", "personalreferent*", "steuerberat*", "wirtschaftsprüf*", "immobilien*", "controller", # off-topic junior roles
     ],
     "throttle_config": {
         # delay ranges in seconds
@@ -56,6 +58,8 @@ scraper_common_config = {
         "Praktikum Data Engineering",
         "Working Student Data Engineering",
         "Intern AI",
+        "Junior Data Scientist",
+        "Junior KI",
     ],
 
     # titles are scored against these topics (never sent to a site)

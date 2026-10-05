@@ -193,18 +193,19 @@ def db_summary(top_n: int) -> dict:
     with closing(_connect()) as conn:
         buckets = dict(conn.execute(
             """SELECT CASE WHEN fit_score >= 85 THEN '85-100' WHEN fit_score >= 60 THEN '60-84' WHEN fit_score >= 30 THEN '30-59' ELSE '0-29' END, COUNT(*)
-               FROM jobs WHERE fit_score IS NOT NULL GROUP BY 1"""
+               FROM jobs WHERE judge_model IS NOT NULL GROUP BY 1"""
         ).fetchall())
         return {
             "total": conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0],
             "folded_urls": conn.execute("SELECT COUNT(*) FROM jobs, json_each(jobs.other_urls)").fetchone()[0],
             "per_platform": dict(conn.execute("SELECT platform, COUNT(*) FROM jobs GROUP BY platform ORDER BY platform").fetchall()),
             "per_status": dict(conn.execute("SELECT description_status, COUNT(*) FROM jobs GROUP BY description_status ORDER BY description_status").fetchall()),
-            "judged": conn.execute("SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL").fetchone()[0],
+            "judged": conn.execute("SELECT COUNT(*) FROM jobs WHERE judge_model IS NOT NULL").fetchone()[0],
+            "per_judge_model": dict(conn.execute("SELECT judge_model, COUNT(*) FROM jobs WHERE judge_model IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1").fetchall()),
             "awaiting_judge": conn.execute("SELECT COUNT(*) FROM jobs WHERE description_status = 'ok' AND judge_model IS NULL").fetchone()[0],
             "fit_buckets": {bucket: buckets.get(bucket, 0) for bucket in FIT_BUCKETS},
             "top_jobs": [dict(row) for row in conn.execute(
-                "SELECT id, fit_score, title, company, location, platform, date_added, url FROM jobs WHERE fit_score IS NOT NULL ORDER BY fit_score DESC, title_score DESC LIMIT ?",
+                "SELECT id, fit_score, title, company, location, platform, date_added, url FROM jobs WHERE judge_model IS NOT NULL ORDER BY fit_score DESC, title_score DESC LIMIT ?",
                 (top_n,),
             )],
         }

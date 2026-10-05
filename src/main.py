@@ -125,6 +125,10 @@ def yield_table(entries: list[dict], field: str) -> list[str]:
     return lines
 
 
+def per_model(counts: dict) -> str:
+    return " (" + ", ".join(f"{model} {count}" for model, count in counts.items()) + ")" if counts else ""
+
+
 def log_job_lines(jobs: list[dict]) -> None:
     for job in jobs:
         logger.info(f"  {job['fit_score']:>3} | {job['title']} | {job['company']} | {job['location']} | {job['platform']}")
@@ -162,7 +166,7 @@ def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
         judge = run["judge"]
         failed = f" ({judge['failed']} failed calls)" if judge["failed"] else ""
         stopped = f" -- stopped early: {judge['stop_reason']}" if judge["stop_reason"] else ""
-        logger.info(f"Judge   | {len(judge['judged'])} judged, {judge['awaiting']} awaiting a verdict{failed}{stopped}")
+        logger.info(f"Judge   | {len(judge['judged'])} judged{per_model(dict(Counter(job['judge_model'] for job in judge['judged']).most_common()))}, {judge['awaiting']} awaiting a verdict{failed}{stopped}")
         top = sorted(judge["judged"], key=lambda job: job["fit_score"], reverse=True)[:TOP_N]
         if top:
             logger.info(f"Top {len(top)} jobs judged in this run (fit | title | company | location | platform):")
@@ -183,7 +187,7 @@ def log_db_summary() -> None:
     logger.info(DIVIDER)
     logger.info(f"Jobs         | {summary['total']} total | " + ", ".join(f"{platform} {count}" for platform, count in summary["per_platform"].items()) + f" | {summary['folded_urls']} duplicate URLs folded into kept jobs")
     logger.info("Descriptions | " + ", ".join(f"{status} {count}" for status, count in summary["per_status"].items()))
-    logger.info(f"Judge        | {summary['judged']} judged, {summary['awaiting_judge']} awaiting a verdict | fit " + ", ".join(f"{bucket}: {count}" for bucket, count in summary["fit_buckets"].items()))
+    logger.info(f"Judge        | {summary['judged']} judged{per_model(summary['per_judge_model'])}, {summary['awaiting_judge']} awaiting a verdict | fit " + ", ".join(f"{bucket}: {count}" for bucket, count in summary["fit_buckets"].items()))
     if summary["top_jobs"]:
         logger.info(f"Top {len(summary['top_jobs'])} jobs in the database (fit | title | company | location | platform):")
         log_job_lines(summary["top_jobs"])

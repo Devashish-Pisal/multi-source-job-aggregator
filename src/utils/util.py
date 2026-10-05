@@ -18,6 +18,16 @@ EMPLOYMENT_NOISE_WORDS = [
     "studentenjob",
     "research assistant",
     "wissenschaftliche hilfskraft",
+    "junior",
+    "trainee",
+    "graduate",
+    "absolvent",
+    "absolventin",
+    "einsteiger",
+    "berufseinsteiger",
+    "entry level",
+    "entry-level",
+    "young professional",
 ]
 GENDER_NOISE_WORDS = [
     "m/w/d",

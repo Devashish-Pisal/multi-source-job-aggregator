@@ -3,13 +3,25 @@ sss_config = {
     "BASE_URL": "https://talents.studysmarter.de/jobs/?keyword={keywords}&page_number=1&job_listing_type=&job_listing_category=&job_listing_tag=&job_listing_company_size=&job_listing_industry=&job_listing_seniority_level=&is_remote_position=&city={location}&radius={radius}&isResetClicked=false&easy_apply=&salary_min=&salary_max=&job_age={job_age}&premium_only=",
     "location_radius_pairs" : {
         # Allowed radius lengths for study smarter are : 1, 10, 20, 30, 40, 50
-        # non-overlapping tiles, only page 1 is read
-        "Mannheim": 40, # + Ludwigshafen, Weinheim, Schwetzingen
+        # non-overlapping tiles within ~150 km of Mannheim, only page 1 is read; a radius is limited by its neighbour
+        "Mannheim": 30, # + Heidelberg, Ludwigshafen, Worms, Speyer, Walldorf
+        "Darmstadt": 10, # 45 km
+        "Kaiserslautern": 20, # 52 km
+        "Karlsruhe": 20, # 54 km, + Ettlingen, Bruchsal
+        "Mainz": 10, # 58 km, Wiesbaden at the edge
+        "Heilbronn": 20, # 66 km, + Neckarsulm
+        "Frankfurt am Main": 10, # 71 km, + Offenbach, Eschborn
+        "Stuttgart": 20, # 95 km, + Böblingen, Ludwigsburg, Esslingen
+        "Saarbrücken": 20, # 110 km
+        "Würzburg": 20, # 112 km
+        # more cities, still non-overlapping (Tübingen and Pforzheim have no room next to Stuttgart / Karlsruhe)
+        #"Gießen": 20,
+        #"Koblenz": 20,
+        #"Aschaffenburg": 20,
         # inside the Mannheim circle; add one only if the run summary shows full first pages
         #"Heidelberg": 20, # + Walldorf, Sandhausen
         #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
-        # inside a tile above, only if its page 1 is full
         #"Ludwigshafen": 30,
         #"Walldorf": 20,
         #"Frankenthal (Pfalz)": 10,
@@ -22,12 +34,6 @@ sss_config = {
         #"Schwetzingen": 10,
         #"Sandhausen": 10,
         #"Viernheim": 10,
-        # Farther cities
-        #"Karlsruhe": 20,
-        #"Kaiserslautern": 20,
-        #"Darmstadt": 20,
-        #"Frankfurt am Main": 20,
-        #"Stuttgart": 20,
     },
     "job_age": 30, # 1, 7, 30; weekly runs 7, catch-up 30
 

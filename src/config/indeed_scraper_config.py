@@ -3,14 +3,26 @@ indeed_scraper_config = {
     "BASE_URL": "https://de.indeed.com/jobs?q={keywords}&l={location}&fromage={job_age}&radius={radius}&sort=date", # newest first
     "location_radius_pairs": {
         # Allowed radius lengths for indeed are : 0, 5, 10, 15, 25, 35, 40, 50, 100
-        # non-overlapping tiles, only page 1 is read
-        "Mannheim, Baden-Württemberg": 40, # + Ludwigshafen, Viernheim, Schwetzingen
-        # "Heidelberg, Baden-Württemberg": 15, # + Walldorf, Sandhausen
+        # non-overlapping tiles within ~150 km of Mannheim, only page 1 is read; a radius is limited by its neighbour
+        "Mannheim, Baden-Württemberg": 25, # + Heidelberg, Ludwigshafen, Worms, Speyer, Walldorf
+        "Darmstadt, Hessen": 10, # 45 km
+        "Kaiserslautern, Rheinland-Pfalz": 25, # 52 km
+        "Karlsruhe, Baden-Württemberg": 25, # 54 km, + Ettlingen, Bruchsal
+        "Mainz, Rheinland-Pfalz": 10, # 58 km, Wiesbaden at the edge
+        "Heilbronn, Baden-Württemberg": 15, # 66 km, + Neckarsulm
+        "Frankfurt am Main, Hessen": 15, # 71 km, + Offenbach, Eschborn, Bad Homburg
+        "Stuttgart, Baden-Württemberg": 25, # 95 km, + Böblingen, Ludwigsburg, Esslingen
+        "Saarbrücken, Saarland": 25, # 110 km
+        "Würzburg, Bayern": 25, # 112 km
+        # more cities, still non-overlapping (Tübingen and Pforzheim have no room next to Stuttgart / Karlsruhe)
+        #"Gießen, Hessen": 25,
+        #"Koblenz, Rheinland-Pfalz": 25,
+        #"Aschaffenburg, Bayern": 15,
         # inside the Mannheim circle; add one only if the run summary shows full first pages
+        #"Heidelberg, Baden-Württemberg": 15, # + Walldorf, Sandhausen
         #"Speyer, Rheinland-Pfalz": 10, # + Hockenheim, Schifferstadt
         #"Worms, Rheinland-Pfalz": 10,
-        #"Weinheim, Baden-Württemberg": 10, # edge of the Mannheim tile
-        # inside a tile above, only if its page 1 is full
+        #"Weinheim, Baden-Württemberg": 10,
         #"Ludwigshafen am Rhein, Rheinland-Pfalz": 25,
         #"Walldorf, Baden-Württemberg": 25,
         #"Frankenthal, Rheinland-Pfalz": 5,
@@ -24,12 +36,6 @@ indeed_scraper_config = {
         #"Sandhausen, Baden-Württemberg": 5,
         #"Handschuhsheim, Baden-Württemberg": 5,
         #"Viernheim, Hessen": 5,
-        # Farther cities
-        #"Karlsruhe, Baden-Württemberg": 25,
-        #"Kaiserslautern, Rheinland-Pfalz": 25,
-        #"Darmstadt, Hessen": 25,
-        #"Frankfurt am Main, Hessen": 25,
-        #"Stuttgart, Baden-Württemberg": 25,
     },
     "job_age": 14, # 1, 3, 7, 14; weekly runs 7, catch-up 14
 

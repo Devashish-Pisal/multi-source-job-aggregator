@@ -47,7 +47,7 @@ Each scraper can be switched on or off with the `use_<site>_scraper` knobs in `s
    - the company matches (same first word, so "Döhler" and "Döhler Group" count as one) and at least `dedup.description_containment` (90%) of the shorter description's word sequences appear in the other — this catches copies whose title wording or city order differs, and short teaser versions of a full ad, while different jobs of the same company (which share boilerplate) stay apart.
 
    A duplicate is not stored: its row is dropped and its URL is added to the kept job's `other_urls`, so it is never scraped again and you can see every board the job is posted on.
-6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Every job is judged once, newest postings first. If the provider's daily token limit is reached, the judge stops at once and the rest stays pending for the next run (or run `python src/utils/llm_judge.py` later).
+6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Every job is judged once, newest postings first. Several models can be listed as fallbacks: when one reaches its daily limit (or is rejected, or keeps failing), the next one takes over with the same job; the column `judge_model` records which model judged a job. When every model is used up, the rest stays pending for the next run (or run `python src/utils/llm_judge.py` later).
 7. The log ends with a **run summary** (what this run did, how many jobs each search keyword and location found — and how many no other one found —, the best jobs it judged) and a **database summary** (totals, fit-score buckets, the best jobs overall).
 
 Safety valves: a single failing query or page is skipped, not fatal; a site that starts blocking (CAPTCHA / "access denied" page, or several failures in a row) trips a circuit breaker that aborts *that* scraper and keeps what it had collected; a posting page that fails twice is left alone until it shows up in a search again; the judge stops on a bad API key or model name and after several failed calls in a row; `Ctrl-C` keeps everything saved so far.
@@ -73,15 +73,21 @@ pip install -r requirements.txt
    ```
    LLM_BASE_URL=https://openrouter.ai/api/v1   # or https://api.groq.com/openai/v1, https://api.openai.com/v1, ...
    LLM_API_KEY=...
-   LLM_MODEL=...                                # the provider's model id
+   LLM_MODEL=...                                # the provider's model id; a comma list = fallbacks, tried in order
    ```
-   Switching providers means changing these three lines, nothing else.
+   Switching providers means changing these lines, nothing else. More providers can follow as numbered blocks, used after the models above are used up:
+   ```
+   LLM_2_BASE_URL=https://openrouter.ai/api/v1
+   LLM_2_API_KEY=...
+   LLM_2_MODEL=...
+   ```
+   Put the strongest model first: verdicts of different models are not equally strict. A model that needs other request settings (e.g. more `max_tokens` for long reasoning) gets an entry in `llm.per_model` in `src/config/stage2_config.py`; `.env` only says which endpoints and models to use. Free tiers send your résumé along with every prompt, so check the provider's data policy.
 4. **Run.**
    ```bash
    python src/main.py
    ```
 
-The first run downloads the embedding model (~2 GB). A full stage-1 run over all four sites is ~300 queries, roughly 50 minutes with the default throttling; stage 2 adds about 10 s per new posting.
+The first run downloads the embedding model (~2 GB). A full stage-1 run over all four sites with the default 10 location tiles and 13 keywords is 520 queries, roughly 95 minutes with the default throttling; stage 2 adds about 10 s per new posting.
 
 `run_stage_1` / `run_stage_2` in `src/config/scraper_common_config.py` switch either stage off; stage 2 alone scrapes and judges whatever is still pending. To run a single scraper (stage 1 then stage 2 for that site, without the judge) or only the judge pass:
 
@@ -96,9 +102,10 @@ PYTHONPATH=src python src/utils/llm_judge.py
 
 Job boards notice sudden bursts of traffic, so grow the search in steps:
 
-1. Start with your `search_keywords` and one location per site with a generous radius (the default: Mannheim, 40–50 km).
+1. Start with your `search_keywords` and one location per site with a generous radius.
 2. After a run or two, check the keyword yield table in the run summary (accepted jobs per site, total, and how many no other keyword found). A keyword whose last number stays at 0 only finds jobs other keywords find as well — drop it.
-3. Check "page 1 results per query" per site. Only page 1 is read, so if queries fill their first page, add a smaller location inside the circle (the commented entries in each `src/config/<site>_scraper_config.py`) for those searches; if they don't, more locations add nothing.
+3. Then cover the wider area with non-overlapping tiles (the default: ten hubs within ~150 km of Mannheim — Mannheim, Darmstadt, Frankfurt, Mainz, Kaiserslautern, Karlsruhe, Heilbronn, Stuttgart, Saarbrücken, Würzburg; each radius is the largest allowed value that does not reach a neighbour's circle).
+4. Check "page 1 results per query" per site. Only page 1 is read, so if queries fill their first page, add a smaller location inside that circle (the commented entries in each `src/config/<site>_scraper_config.py`) for those searches; if they don't, more locations add nothing.
 
 ## Adapting the project to you
 
@@ -113,7 +120,7 @@ Nothing about your situation is hard-coded. These are the places to change:
 | Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). A trailing `*` also matches longer forms (`praktik*` → Praktikum, Praktikantin, Praktika). `[]` switches it off |
 | Which fields are never wanted | `title_excluded_words` — titles containing one of these words are rejected (e.g. sales, customer support, PhD). `[]` switches it off |
 | Which words are ignored when comparing titles | `EMPLOYMENT_NOISE_WORDS` (Werkstudent, Praktikum, Intern, …), `CONTRACT_NOISE_WORDS` and `GENDER_NOISE_WORDS` in `src/utils/util.py`. Because employment words are stripped, "Werkstudent Data Science" and "Data Science" embed identically — put topics, not employment types, into `match_keywords`; let the judge decide the level |
-| Where | `location_radius_pairs` in each `src/config/<site>_scraper_config.py` (non-overlapping tiles; allowed radii are listed in each file) |
+| Where | `location_radius_pairs` in each `src/config/<site>_scraper_config.py` (non-overlapping tiles; allowed radii are listed in each file) — and the *Location* line in `profile/system_prompt.md`, so the judge accepts the same area |
 | How fresh | `job_age` in each site config (weekly and catch-up values are in each file's comment) |
 | Which boards | `use_<site>_scraper` in `src/config/scraper_common_config.py` (StudySmarter only lists student jobs) |
 | How strict the title filter is | `embedding_match_config.threshold` — see [Tuning](#tuning) |
@@ -152,16 +159,18 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `system_prompt_path`, `resume_path` | the judge's prompt and your résumé (default `profile/system_prompt.md`, `profile/resume.md`) |
 | `max_detail_pages_per_platform` | posting pages per site and run; the rest stay pending for the next run |
 | `max_description_attempts` | failed page loads before a URL is given up on |
-| `max_description_chars` | longer descriptions are cut before judging |
+| `max_description_chars` | longer descriptions are cut before judging (keeps prompt + `max_tokens` under a tokens-per-minute limit) |
 | `throttle.between_detail_pages` | random delay between posting pages |
 | `max_posting_age_days` | postings older than this (by their own posting date) are marked expired and not judged |
 | `dedup.description_containment` | share of the shorter description that must appear in the other for two ads of the same company to count as one job (0–1; raise it if different jobs get merged) |
-| `llm.temperature`, `llm.max_tokens` | request parameters; `None` omits one (some reasoning models reject `temperature`) |
+| `llm.temperature`, `llm.max_tokens` | request parameters, the defaults for every model; `None` omits one (some reasoning models reject `temperature`). Reasoning models need room: `gpt-oss-120b` uses ~2,350 completion tokens per verdict |
 | `llm.response_format` | `"json_schema"` (the provider enforces the verdict schema), `"json_object"` or `None` for providers that reject the stricter modes; the reply is validated either way |
+| `llm.per_model` | overrides of `temperature`, `max_tokens` and `response_format` for single models, keyed by the model name as written in `.env`, e.g. `{"nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 8000}}`. An unknown key stops the judge pass with an error; an entry for a model that is not in `.env` is reported as a warning |
 | `llm.timeout_seconds`, `llm.max_consecutive_failures`, `llm.delay_between_calls` | judge pass safety valves |
 | `llm.rate_limit_retries`, `llm.rate_limit_pause_seconds` | on HTTP 429 (rate limit) the judge waits and retries the same job instead of failing it |
+| `llm.rate_limit_max_wait_seconds` | a longer requested wait (or a message naming a daily limit) means the model is used up for today; the next model takes over |
 
-`.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
+`.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (comma list allowed); further providers as `LLM_2_…`, `LLM_3_…`.
 
 ## Output
 
@@ -205,8 +214,9 @@ A CSV with no rows is not written.
   "matched_skills": ["Python", "SQL"], "missing_must_haves": ["Power BI"],
   "reason": "…",
   "details": {
-    "requirements": {"must_have": [], "nice_to_have": [], "tech_stack": [], "keywords": []},
-    "role": {"responsibilities": [], "team": "", "company_summary": ""},
+    "requirements": {"must_have": [], "nice_to_have": [], "tech_stack": [], "keywords": [], "education": [], "soft_skills": [], "experience": ""},
+    "role": {"responsibilities": [], "team": "", "company_summary": "", "projects": [], "learning": [], "prospects": ""},
+    "company": {"industry": "", "products": [], "values": [], "size": "", "benefits": []},
     "logistics": {"start_date": "", "duration": "", "hours_per_week": "", "work_model": "hybrid", "salary": "", "application_deadline": ""}
   }
 }
@@ -219,11 +229,11 @@ SELECT id, title, company, url, fit_score,
        json_extract(judge_json, '$.details.requirements.must_have') AS must_have,
        json_extract(judge_json, '$.details.requirements.keywords') AS keywords
 FROM jobs
-WHERE description_status = 'ok' AND fit_score >= 70 AND json_extract(judge_json, '$.level_ok') = 1
+WHERE description_status = 'ok' AND judge_model IS NOT NULL AND fit_score >= 70 AND json_extract(judge_json, '$.level_ok') = 1
 ORDER BY date_added DESC, fit_score DESC;
 ```
 
-To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 2. If two different jobs were merged, raise `dedup.description_containment` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
+To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 2; its old `fit_score` and `judge_json` stay until the new verdict replaces them, so filter on `judge_model IS NOT NULL` as above. If two different jobs were merged, raise `dedup.description_containment` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
 
 ## Tuning
 
@@ -237,9 +247,10 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 
 - **The browser hangs at start or fails on the profile lock** — another Chrome still uses the profile directory; close it completely.
 - **A site's circuit breaker trips** — the site is blocking. Raise the delays in `throttle_config` / `throttle.between_detail_pages`, or run that site less often.
-- **The judge fails with HTTP 400 about the response format** — the provider or model does not support JSON schemas; set `llm.response_format` to `"json_object"` (or `None`).
-- **"response cut off at max_tokens"** — reasoning models spend tokens on thinking; raise `llm.max_tokens`.
-- **"daily token limit reached"** — free tiers cap tokens per day (Groq: 200k for `gpt-oss-120b`, roughly 50 judged jobs). The jobs stay pending; run `python src/utils/llm_judge.py` the next day, or use a paid tier.
+- **The judge fails with HTTP 400 about the response format** — the provider or model does not support JSON schemas; set `"response_format": "json_object"` (or `None`) for that model in `llm.per_model`, or in `llm.response_format` for all.
+- **"response cut off at max_tokens"** — reasoning models spend tokens on thinking; give that model more room in `llm.per_model` (Groq models must keep prompt + `max_tokens` under the 8k tokens-per-minute limit, other providers may not have such a limit).
+- **"daily limit -- switching to …" / "every model is used up"** — free tiers cap tokens or requests per day (Groq: 200k tokens per model, roughly 30 judged jobs for `gpt-oss-120b`; OpenRouter free models: 50 requests per day in total). Add fallback models in `.env`; whatever stays pending is judged by the next run or `python src/utils/llm_judge.py` the next day.
+- **HTTP 400 "max completion tokens reached before generating a valid document"** — the model's reasoning plus the verdict did not fit its `max_tokens`; raise it for that model in `llm.per_model` (prompt + `max_tokens` must stay under the provider's tokens-per-minute limit, so lower `max_description_chars` if needed).
 - **Frequent "Rate limit hit" waits** — the provider's tokens-per-minute limit is reached; the judge waits as long as the provider asks. Every call counts its prompt (instructions + résumé + description) plus `llm.max_tokens`, so a shorter résumé, a lower `max_description_chars` or a lower `max_tokens` (if replies stay below it) all help; so does a paid tier.
 - **"has schema version N, this code expects M"** — the database layout changed; move the old `data/database/app.db` aside and a fresh one is created on the next run.
 - **Need more detail** — set `log_level` to `"DEBUG"` (shows throttling, browser page errors, failed requests, token usage).

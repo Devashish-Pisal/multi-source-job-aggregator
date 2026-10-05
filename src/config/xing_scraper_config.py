@@ -3,13 +3,25 @@ xing_scraper_config = {
     "BASE_URL": "https://www.xing.com/jobs/search/ki?keywords={keywords}&location={location}&radius={radius}&sincePeriod={job_age}",
     "location_radius_pairs" : {
         # Allowed radius lengths for xing are : 0, 10, 20, 50, 70, 100, 200
-        # non-overlapping tiles, only page 1 is read
-        "Mannheim": 50, # + Ludwigshafen, Weinheim, Schwetzingen
+        # non-overlapping tiles within ~150 km of Mannheim, only page 1 is read; a radius is limited by its neighbour
+        "Mannheim": 20, # + Heidelberg, Ludwigshafen, Worms, Speyer (Walldorf is 24 km out, 50 would overlap)
+        "Darmstadt": 10, # 45 km
+        "Kaiserslautern": 20, # 52 km
+        "Karlsruhe": 20, # 54 km, + Ettlingen, Bruchsal
+        "Mainz": 10, # 58 km, Wiesbaden at the edge
+        "Heilbronn": 20, # 66 km, + Neckarsulm
+        "Frankfurt am Main": 10, # 71 km, + Offenbach, Eschborn
+        "Stuttgart": 20, # 95 km, + Böblingen, Ludwigsburg, Esslingen
+        "Saarbrücken": 20, # 110 km
+        "Würzburg": 20, # 112 km
+        # more cities, still non-overlapping (Tübingen and Pforzheim have no room next to Stuttgart / Karlsruhe)
+        #"Gießen": 20,
+        #"Koblenz": 20,
+        #"Aschaffenburg": 20,
         # inside the Mannheim circle; add one only if the run summary shows full first pages
         #"Heidelberg": 20, # + Walldorf, Sandhausen
         #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
-        # inside a tile above, only if its page 1 is full
         #"Ludwigshafen am Rhein": 20,
         #"Walldorf": 20,
         #"Frankenthal": 10,
@@ -22,12 +34,6 @@ xing_scraper_config = {
         #"Schwetzingen": 10,
         #"Sandhausen": 10,
         #"Viernheim": 10,
-        # Farther cities
-        #"Karlsruhe": 20,
-        #"Kaiserslautern": 20,
-        #"Darmstadt": 20,
-        #"Frankfurt am Main": 20,
-        #"Stuttgart": 20,
     },
     "job_age": "LAST_MONTH", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
 
