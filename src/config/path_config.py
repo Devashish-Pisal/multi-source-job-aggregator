@@ -13,3 +13,4 @@ PROFILE_FOLDER_PATH = PROJECT_ROOT / "profile"
 
 # Files
 DATABASE_FILE_PATH = DATA_FOLDER_PATH / "database" / "app.db"
+PLACES_FILE_PATH = PROJECT_ROOT / "resources" / "places_de.csv" # GeoNames, CC BY 4.0

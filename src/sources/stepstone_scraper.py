@@ -19,8 +19,9 @@ from utils.util import (
     detect_block_page,
     title_rejection_reason,
     normalize_job_url,
+    is_connection_error,
 )
-from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
+from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, delay_after_connection_error, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
 from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines
 
@@ -65,7 +66,7 @@ class StepstoneScraper:
     def build_query_urls() -> list[tuple[str, str, str]]:
         urls = []
         location_radius_pairs = stepstone_scraper_config["location_radius_pairs"]
-        keywords_list = scraper_common_config["search_keywords"]
+        keywords_list = stepstone_scraper_config["search_keywords"] or scraper_common_config["search_keywords"]
         job_age = stepstone_scraper_config["job_age"]
         base_url = stepstone_scraper_config["BASE_URL"]
         for location, v in location_radius_pairs.items():
@@ -157,7 +158,7 @@ class StepstoneScraper:
                             why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} queries failed in a row with no block page detected, last error: {error}"
                             logger.error(f"[Stepstone Scraper] Circuit breaker tripped -- {why}. Aborting this scraper with {remaining} of {len(query_url_list)} queries unvisited so a blocking site is not hammered further; {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs collected so far are kept. Current page URL: {page.url}")
                             break
-                    delay_between_queries(scraper_common_config)
+                    delay_between_queries(scraper_common_config, stepstone_scraper_config["between_queries"])
                 else:
                     logger.info(f"[Stepstone Scraper] Browser session completed successfully, all {len(query_url_list)} queries visited.")
             finally:
@@ -197,7 +198,14 @@ class StepstoneScraper:
                     url = job["url"]
                     scraped_jobs.append(job)
                     try:
-                        response = page.goto(url, wait_until="domcontentloaded")
+                        try:
+                            response = page.goto(url, wait_until="domcontentloaded")
+                        except Exception as exc:
+                            if not is_connection_error(exc):
+                                raise
+                            logger.warning(f"[Stepstone Scraper] Connection dropped ({str(exc).strip().splitlines()[0]}), pausing before one retry | URL: {url}")
+                            delay_after_connection_error(stage2_config)
+                            response = page.goto(url, wait_until="domcontentloaded")
                         delay_after_page_load(scraper_common_config)
                         if cookie_button:
                             accept_cookies = page.locator(cookie_button)

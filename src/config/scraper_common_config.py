@@ -8,7 +8,7 @@ scraper_common_config = {
     "use_study_smarter_scraper": True,
 
     # 1 = search pages, 2 = job pages + judge
-    "run_stage_1": True,
+    "run_stage_1": False,
     "run_stage_2": True,
 
     "log_level": "INFO", # DEBUG, INFO, WARNING, ...
@@ -16,22 +16,23 @@ scraper_common_config = {
     "browser_profile_path": "/home/dev/scraping_chrome_profiles/common_profile/", # Browser profiles with accepted website cookies reduces the chances of triggering anti bot measure
     "embedding_match_config": {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
-        "threshold": 0.43, # to filter non-relevant (or less relevant) job listings
+        "threshold": 0.40, # to filter non-relevant (or less relevant) job listings
     },
-    # title must contain one of these words, [] turns it off; a trailing * also matches longer forms
+    # title must contain one of these words, [] turns it off; * matches more letters (praktik* -> praktikum, *buchhalt* -> finanzbuchhaltung)
     "title_required_words": [
         "werkstudent*", "werkstudierende*", "working student", "working students",
         "praktik*", "pflichtpraktik*", "praxissemester",
         "intern", "interns", "internship*",
         "thesis", "masterthesis", "bachelorthesis", "abschlussarbeit", "masterarbeit", "bachelorarbeit", "masterand*", "bachelorand*",
-        "studentisch*", "student", "students", "studentin", "studenten", "hiwi", "hilfskraft",
+        "studentisch*", "student", "students", "studentin", "studenten", "studierende*", "hiwi", "hilfskraft",
         "junior", "trainee*", "graduate*", "absolvent*", "einsteiger*", "berufseinsteiger*", "direkteinst*", "entry level", "entry-level", "young professional*",
     ],
     # titles with one of these words are rejected, [] turns it off
     "title_excluded_words": [
         "sales", "vertrieb", "kundenservice", "customer support", "customer service", "business development", "key account",
         "phd", "doktorand*", "initiativbewerbung", "unsolicited", "schülerpraktikum", "orientierungspraktikum", "chief of staff",
-        "buchhalt*", "einkäufer*", "recruiter*", "recruiting", "personalreferent*", "steuerberat*", "wirtschaftsprüf*", "immobilien*", "controller", # off-topic junior roles
+        "*buchhalt*", "*einkäufer*", "recruiter*", "recruiting", "personalreferent*", "steuerberat*", "wirtschaftsprüf*", "immobilien*", "controller", # off-topic junior roles
+        "verkauf*", "promotion", "fahrer", "duale*", "dhbw", "human resources", "marketing", "forderungsmanagement", "zahlungsverkehr", "public affairs",
     ],
     "throttle_config": {
         # delay ranges in seconds

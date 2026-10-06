@@ -68,8 +68,8 @@ GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]-?in(?:nen)?\b") 
 def title_words_pattern(words: list[str]) -> re.Pattern | None:
     if not words:
         return None
-    parts = [re.escape(w.lower()[:-1]) + r"\w*" if w.endswith("*") else re.escape(w.lower()) for w in sorted(words, key=len, reverse=True)]
-    return re.compile(r"\b(?:" + "|".join(parts) + r")\b") # "praktik*" also matches praktikum, praktikanten
+    parts = [(r"\w*" if w.startswith("*") else "") + re.escape(w.lower().strip("*")) + (r"\w*" if w.endswith("*") else "") for w in sorted(words, key=len, reverse=True)]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b") # "praktik*" also matches praktikum, "*buchhalt*" finanzbuchhaltung
 
 
 TITLE_REQUIRED_WORDS_PATTERN = title_words_pattern(scraper_common_config["title_required_words"])
@@ -111,6 +111,7 @@ BLOCK_PAGE_TEXT_PATTERN = re.compile(
     r"|ungewöhnlichen datenverkehr|complete the security check|access to this page has been denied|access denied"
     r"|zugriff verweigert|too many requests|zu viele anfragen|prove you are human|additional verification required"
 )
+CONNECTION_ERROR_PATTERN = re.compile(r"net::ERR_(?:HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|EMPTY_RESPONSE|NETWORK_CHANGED|TIMED_OUT|CONNECTION_TIMED_OUT|SOCKET_NOT_CONNECTED)")
 BLOCK_PAGE_URL_PATTERN = re.compile(r"captcha|/challenge|/blocked|access-denied|/sorry/|/distil_r_captcha")
 BLOCK_PAGE_SELECTORS = [
     "#challenge-running",
@@ -140,6 +141,10 @@ def detect_block_page(page) -> str | None:
     except Exception:
         return None
     return None
+
+
+def is_connection_error(exc: Exception) -> bool:
+    return bool(CONNECTION_ERROR_PATTERN.search(str(exc)))
 
 
 def compute_search_keywords_embeddings(model, keywords:list[str]):

@@ -36,6 +36,8 @@ xing_scraper_config = {
         #"Viernheim": 10,
     },
     "job_age": "LAST_MONTH", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
+    "search_keywords": None, # None = the common list
+    "between_queries": None, # None = the common pace
 
     # selectors
     "cookie_button": "button[data-action-type='accept'][id='accept']", # accept button
@@ -45,10 +47,10 @@ xing_scraper_config = {
         "card_link": "a", # title is in its aria-label
     },
     "detail_page": {
-        "wait_for": "main",
-        "description": ["[data-testid='job-description']", "main"], # 'main' is the noisy last resort
-        "company": ["[data-testid='job-company-name']"],
-        "location": ["[data-testid='job-location']"],
+        "wait_for": "[data-testid='expandable-content']", # 'main' appears before the JSON-LD does
+        "description": ["[data-testid='expandable-content']"], # 'main' would hold the similar-jobs list
+        "company": ["[data-testid='job-details-company-info-name']"],
+        "location": ["[data-testid='company-card-location']"],
         "junk_lines": ["null", "Jetzt bewerben", "Bewerbung starten mit LinkedIn", "Bitte warten..."], # dropped from descriptions
         "footer_markers": ["Anstellungsart"], # short footer block cut off
         "expired_signatures": ["nicht mehr verfügbar", "nicht mehr online", "ist abgelaufen", "no longer available", "wurde deaktiviert"],

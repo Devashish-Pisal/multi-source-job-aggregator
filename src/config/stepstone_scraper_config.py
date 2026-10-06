@@ -37,6 +37,8 @@ stepstone_scraper_config = {
         #"Viernheim": 5,
     },
     "job_age": 7, # 1 or 7 (max)
+    "search_keywords": None, # None = the common list
+    "between_queries": None, # None = the common pace
 
     # selectors
     "cookie_button": "button[id='ccmgt_explicit_accept']", # unverified

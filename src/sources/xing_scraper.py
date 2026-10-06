@@ -64,7 +64,7 @@ class XingScraper:
     def build_query_urls() -> list[tuple[str, str, str]]:
         urls = []
         location_radius_pairs = xing_scraper_config["location_radius_pairs"]
-        keywords_list = scraper_common_config["search_keywords"]
+        keywords_list = xing_scraper_config["search_keywords"] or scraper_common_config["search_keywords"]
         job_age = xing_scraper_config["job_age"]
         base_url = xing_scraper_config["BASE_URL"]
         for location, v in location_radius_pairs.items():
@@ -168,7 +168,7 @@ class XingScraper:
                             why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} queries failed in a row with no block page detected, last error: {error}"
                             logger.error(f"[Xing Scraper] Circuit breaker tripped -- {why}. Aborting this scraper with {remaining} of {len(query_url_list)} queries unvisited so a blocking site is not hammered further; {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs collected so far are kept. Current page URL: {page.url}")
                             break
-                    delay_between_queries(scraper_common_config)
+                    delay_between_queries(scraper_common_config, xing_scraper_config["between_queries"])
                 else:
                     logger.info(f"[Xing Scraper] Browser session completed successfully, all {len(query_url_list)} queries visited.")
             finally:

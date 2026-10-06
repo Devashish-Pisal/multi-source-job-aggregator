@@ -5,7 +5,7 @@ import sys
 import time
 from itertools import count
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_origin
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -18,9 +18,11 @@ from config.scraper_common_config import scraper_common_config
 from config.stage2_config import stage2_config
 from utils.db import jobs_pending_judge, save_verdict
 from utils.throttle import delay_between_llm_calls
+from utils.search_area import outside_search_area
 
 RESPONSE_FORMAT_MODES = ("json_schema", "json_object", None)
 REQUEST_KEYS = ("temperature", "max_tokens", "response_format") # what per_model may override
+LOCATION_FILTER = "location filter" # judge_model of jobs outside stage2_config["search_area"]
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.S)
 CODE_FENCE_PATTERN = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.S)
@@ -64,7 +66,7 @@ class Requirements(StrictModel):
     keywords: list[str]
     education: list[str]
     soft_skills: list[str]
-    experience: str
+    experience: list[str]
 
     _blank = field_validator("must_have", "nice_to_have", "tech_stack", "keywords", "education", "soft_skills", "experience", mode="before")(_blank_placeholders)
 
@@ -126,6 +128,33 @@ class JobVerdict(StrictModel):
     @classmethod
     def clamp_fit_score(cls, value):
         return max(0, min(100, round(float(value))))
+
+
+def blank(model: type[BaseModel]) -> dict:
+    values = {}
+    for name, field in model.model_fields.items():
+        if isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel):
+            values[name] = blank(field.annotation)
+        else:
+            values[name] = [] if get_origin(field.annotation) is list else "unspecified" if get_origin(field.annotation) is Literal else ""
+    return values
+
+
+def apply_verdict_rules(verdict: JobVerdict) -> dict:
+    rules = stage2_config["verdict"]
+    result = verdict.model_dump()
+    cap = rules["max_fit_with_missing_must_haves"]
+    if cap and len(result["missing_must_haves"]) >= cap["count"] and result["fit_score"] > cap["fit"]:
+        logger.debug(f"[LLM Judge] fit {result['fit_score']} capped at {cap['fit']}: {len(result['missing_must_haves'])} must-haves missing")
+        result["fit_score"] = cap["fit"]
+    if result["fit_score"] < rules["empty_details_below"]:
+        result["details"] = blank(JobDetails)
+    return result
+
+
+def location_verdict(reason: str) -> dict:
+    return JobVerdict(fit_score=0, employment_type="other", level_ok=False, required_languages=[], matched_skills=[], missing_must_haves=[],
+                      reason=reason, details=JobDetails(**blank(JobDetails))).model_dump()
 
 
 def strict_json_schema(model: type[BaseModel]) -> dict:
@@ -253,7 +282,7 @@ def judge_job(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
         logger.debug(f"[LLM Judge] Tokens: prompt={completion.usage.prompt_tokens} completion={completion.usage.completion_tokens}")
     if choice.finish_reason == "length":
         raise ValueError(f"response cut off at max_tokens={settings['max_tokens']} (raise it in stage2_config['llm'], or for this model in 'per_model')")
-    return parse_verdict(choice.message.content or "").model_dump()
+    return apply_verdict_rules(parse_verdict(choice.message.content or ""))
 
 
 def rate_limit_wait(exc: RateLimitError) -> float | None:
@@ -319,6 +348,15 @@ def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
     consecutive_failures = 0
     try:
         for job in pending:
+            outside = outside_search_area(job.get("location"))
+            if outside:
+                verdict = location_verdict(f"Outside the search area: {outside}.")
+                verdict_json = json.dumps(verdict, ensure_ascii=False)
+                save_verdict(job["id"], LOCATION_FILTER, 0, verdict["employment_type"], verdict_json)
+                job.update(judge_model=LOCATION_FILTER, fit_score=0, employment_type=verdict["employment_type"], judge_json=verdict_json)
+                judged.append(job)
+                logger.info(f"[LLM Judge] Not judged, {outside}: '{job['title']}' at '{job.get('company')}' | URL: {job['url']}")
+                continue
             while current < len(judges): # same job again after a switch
                 judge = judges[current]
                 try:

@@ -47,7 +47,7 @@ Each scraper can be switched on or off with the `use_<site>_scraper` knobs in `s
    - the company matches (same first word, so "Döhler" and "Döhler Group" count as one) and at least `dedup.description_containment` (90%) of the shorter description's word sequences appear in the other — this catches copies whose title wording or city order differs, and short teaser versions of a full ad, while different jobs of the same company (which share boilerplate) stay apart.
 
    A duplicate is not stored: its row is dropped and its URL is added to the kept job's `other_urls`, so it is never scraped again and you can see every board the job is posted on.
-6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Every job is judged once, newest postings first. Several models can be listed as fallbacks: when one reaches its daily limit (or is rejected, or keeps failing), the next one takes over with the same job; the column `judge_model` records which model judged a job. When every model is used up, the rest stays pending for the next run (or run `python src/utils/llm_judge.py` later).
+6. Each remaining description is sent to the LLM configured in `.env` (any OpenAI-compatible endpoint: OpenRouter, Groq, OpenAI, Anthropic, …) together with your judge prompt and résumé from `profile/`. The model returns a JSON verdict — validated against a schema — with a fit score 0–100, the employment type, whether the level fits you, required languages, matched skills, missing must-haves, a short reason and the extracted details. Two rules are applied afterwards: details are cleared below fit 40 (`verdict.empty_details_below`), and two or more missing must-haves cap the score at 84 (`verdict.max_fit_with_missing_must_haves`). Postings whose every listed town lies farther than `search_area.radius_km` from the search centre (and that are not remote) are not sent to the model at all: they get a verdict with fit 0 and `judge_model = "location filter"` — distances come from a bundled place list, so the model never has to guess them. Every job is judged once, newest postings first. Several models can be listed as fallbacks: when one reaches its daily limit (or is rejected, or keeps failing), the next one takes over with the same job; the column `judge_model` records which model judged a job. When every model is used up, the rest stays pending for the next run (or run `python src/utils/llm_judge.py` later).
 7. The log ends with a **run summary** (what this run did, how many jobs each search keyword and location found — and how many no other one found —, the best jobs it judged) and a **database summary** (totals, fit-score buckets, the best jobs overall).
 
 Safety valves: a single failing query or page is skipped, not fatal; a site that starts blocking (CAPTCHA / "access denied" page, or several failures in a row) trips a circuit breaker that aborts *that* scraper and keeps what it had collected; a posting page that fails twice is left alone until it shows up in a search again; the judge stops on a bad API key or model name and after several failed calls in a row; `Ctrl-C` keeps everything saved so far.
@@ -104,7 +104,7 @@ Job boards notice sudden bursts of traffic, so grow the search in steps:
 
 1. Start with your `search_keywords` and one location per site with a generous radius.
 2. After a run or two, check the keyword yield table in the run summary (accepted jobs per site, total, and how many no other keyword found). A keyword whose last number stays at 0 only finds jobs other keywords find as well — drop it.
-3. Then cover the wider area with non-overlapping tiles (the default: ten hubs within ~150 km of Mannheim — Mannheim, Darmstadt, Frankfurt, Mainz, Kaiserslautern, Karlsruhe, Heilbronn, Stuttgart, Saarbrücken, Würzburg; each radius is the largest allowed value that does not reach a neighbour's circle).
+3. Then cover the wider area with non-overlapping tiles (the default: ten hubs within ~150 km of Mannheim, while `search_area` only accepts postings within 100 km — trim the farthest tiles to match — Mannheim, Darmstadt, Frankfurt, Mainz, Kaiserslautern, Karlsruhe, Heilbronn, Stuttgart, Saarbrücken, Würzburg; each radius is the largest allowed value that does not reach a neighbour's circle).
 4. Check "page 1 results per query" per site. Only page 1 is read, so if queries fill their first page, add a smaller location inside that circle (the commented entries in each `src/config/<site>_scraper_config.py`) for those searches; if they don't, more locations add nothing.
 
 ## Adapting the project to you
@@ -115,12 +115,12 @@ Nothing about your situation is hard-coded. These are the places to change:
 |------|-------|
 | Who you are and what you look for (student / graduate / experienced, role types, seniority, languages, hours, what does *not* fit) and how postings are scored | `profile/system_prompt.md` — the *Candidate situation* section and the *fit_score guide*. Keep the *Output* section's keys unchanged; the reply is validated against them |
 | Your résumé | `profile/resume.md` (plain text or markdown — you control exactly what the judge sees) |
-| What is searched on the sites | `search_keywords` in `src/config/scraper_common_config.py` — keep it short, every entry costs one page load per location tile |
+| What is searched on the sites | `search_keywords` in `src/config/scraper_common_config.py` — keep it short, every entry costs one page load per location tile. A site config can set its own shorter `search_keywords` (Indeed does, it blocks quick bursts) |
 | What titles are scored against | `match_keywords` in the same file — never sent to a site, so it can be broad (niche phrasings, other languages) |
-| Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). A trailing `*` also matches longer forms (`praktik*` → Praktikum, Praktikantin, Praktika). `[]` switches it off |
-| Which fields are never wanted | `title_excluded_words` — titles containing one of these words are rejected (e.g. sales, customer support, PhD). `[]` switches it off |
+| Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). A trailing `*` also matches longer forms (`praktik*` → Praktikum, Praktikantin, Praktika), a leading `*` also matches compounds (`*buchhalt*` → Finanzbuchhaltung). `[]` switches it off |
+| Which fields are never wanted | `title_excluded_words` — titles containing one of these words are rejected (e.g. sales, customer support, PhD, marketing, dual study). `[]` switches it off |
 | Which words are ignored when comparing titles | `EMPLOYMENT_NOISE_WORDS` (Werkstudent, Praktikum, Intern, …), `CONTRACT_NOISE_WORDS` and `GENDER_NOISE_WORDS` in `src/utils/util.py`. Because employment words are stripped, "Werkstudent Data Science" and "Data Science" embed identically — put topics, not employment types, into `match_keywords`; let the judge decide the level |
-| Where | `location_radius_pairs` in each `src/config/<site>_scraper_config.py` (non-overlapping tiles; allowed radii are listed in each file) — and the *Location* line in `profile/system_prompt.md`, so the judge accepts the same area |
+| Where | `location_radius_pairs` in each `src/config/<site>_scraper_config.py` (non-overlapping tiles; allowed radii are listed in each file) — and `search_area` in `src/config/stage2_config.py` (centre and radius; postings outside are not judged) |
 | How fresh | `job_age` in each site config (weekly and catch-up values are in each file's comment) |
 | Which boards | `use_<site>_scraper` in `src/config/scraper_common_config.py` (StudySmarter only lists student jobs) |
 | How strict the title filter is | `embedding_match_config.threshold` — see [Tuning](#tuning) |
@@ -148,6 +148,7 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `location_radius_pairs` | location tiles to query; with page 1 only, overlapping circles return the same page again |
 | `job_age` | posting age filter |
 | `use_headless_mode` | keep `False` for Indeed, Xing and Stepstone – they block headless browsers |
+| `search_keywords`, `between_queries` | this site's own keyword list and delay between queries; `None` uses the common ones |
 | `cookie_button` | cookie-banner button clicked when visible (`None` = no handling) |
 | `search_page` | selectors for the results page (stage 1) |
 | `detail_page` | selectors and expired-page phrases for the posting page (stage 2); `description` / `company` / `location` are fallback lists, first match wins |
@@ -161,6 +162,9 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `max_description_attempts` | failed page loads before a URL is given up on |
 | `max_description_chars` | longer descriptions are cut before judging (keeps prompt + `max_tokens` under a tokens-per-minute limit) |
 | `throttle.between_detail_pages` | random delay between posting pages |
+| `throttle.after_connection_error` | pause before retrying a posting page once when the site drops the connection (Stepstone does this when it wants a break) |
+| `search_area` | `latitude`, `longitude`, `radius_km` of the area you want; postings outside it are not judged (`None` turns the check off) |
+| `verdict.empty_details_below`, `verdict.max_fit_with_missing_must_haves` | rules applied to every verdict (see step 6) |
 | `max_posting_age_days` | postings older than this (by their own posting date) are marked expired and not judged |
 | `dedup.description_containment` | share of the shorter description that must appear in the other for two ads of the same company to count as one job (0–1; raise it if different jobs get merged) |
 | `llm.temperature`, `llm.max_tokens` | request parameters, the defaults for every model; `None` omits one (some reasoning models reject `temperature`). Reasoning models need room: `gpt-oss-120b` uses ~2,350 completion tokens per verdict |
@@ -203,7 +207,7 @@ A CSV with no rows is not written.
 | `description_status` | `pending` → `ok`, or `expired` (removed, or older than `max_posting_age_days`), `failed` |
 | `description_attempts` | page loads so far |
 | `dedup_key` | `normalised company\|title\|first city` |
-| `judge_model`, `fit_score`, `judge_json` | the verdict |
+| `judge_model`, `fit_score`, `judge_json` | the verdict; `judge_model` is `location filter` for postings outside the search area |
 
 `judge_json` holds:
 
@@ -214,7 +218,7 @@ A CSV with no rows is not written.
   "matched_skills": ["Python", "SQL"], "missing_must_haves": ["Power BI"],
   "reason": "…",
   "details": {
-    "requirements": {"must_have": [], "nice_to_have": [], "tech_stack": [], "keywords": [], "education": [], "soft_skills": [], "experience": ""},
+    "requirements": {"must_have": [], "nice_to_have": [], "tech_stack": [], "keywords": [], "education": [], "soft_skills": [], "experience": []},
     "role": {"responsibilities": [], "team": "", "company_summary": "", "projects": [], "learning": [], "prospects": ""},
     "company": {"industry": "", "products": [], "values": [], "size": "", "benefits": []},
     "logistics": {"start_date": "", "duration": "", "hours_per_week": "", "work_model": "hybrid", "salary": "", "application_deadline": ""}
@@ -237,7 +241,7 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 
 ## Tuning
 
-**Title threshold.** Stage 1 is a cheap pre-filter: recall matters more than precision, because a false positive only costs one page load and one judge call, while a false negative loses the job. After a run, sort `data/rejected/*.csv` by `title_score`. If relevant titles sit below the threshold, lower it to just under the lowest relevant one; the run summary shows what that costs in extra pages and judge calls. Improving `match_keywords` (more topic phrasings) usually helps more than moving the threshold. The default 0.43 comes from the first runs: every job the judge rated 60+ scored above 0.50, and relevant titles that were rejected went down to 0.434.
+**Title threshold.** Stage 1 is a cheap pre-filter: recall matters more than precision, because a false positive only costs one page load and one judge call, while a false negative loses the job. After a run, sort `data/rejected/*.csv` by `title_score`. If relevant titles sit below the threshold, lower it to just under the lowest relevant one; the run summary shows what that costs in extra pages and judge calls. Improving `match_keywords` (more topic phrasings) usually helps more than moving the threshold. The default 0.40 comes from the first runs: the score barely predicts the judge's fit, and relevant titles went down to 0.41 — the word lists do the precision work.
 
 **Level words.** The topic score cannot tell "Werkstudent Data Engineering" from "Senior Data Engineer" — employment words are stripped before comparing. `title_required_words` does that job: in the first runs, every accepted title without a student word was rated 20 or lower by the judge. Rejected rows whose score is above the threshold were dropped by this list or by `title_excluded_words`; if one of them should have passed, adjust the word lists.
 
@@ -246,7 +250,8 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 ## Troubleshooting
 
 - **The browser hangs at start or fails on the profile lock** — another Chrome still uses the profile directory; close it completely.
-- **A site's circuit breaker trips** — the site is blocking. Raise the delays in `throttle_config` / `throttle.between_detail_pages`, or run that site less often.
+- **A site's circuit breaker trips** — the site is blocking. Raise the delays in `throttle_config` / `throttle.between_detail_pages` (or that site's `between_queries`), give it a shorter `search_keywords` list, or run it less often.
+- **"Security Check - Indeed.com"** — Indeed wants a human check. Open Chrome by hand on the scraping profile (see *Browser profile* under setup), open any Indeed page, pass the check, quit Chrome completely, then run again.
 - **The judge fails with HTTP 400 about the response format** — the provider or model does not support JSON schemas; set `"response_format": "json_object"` (or `None`) for that model in `llm.per_model`, or in `llm.response_format` for all.
 - **"response cut off at max_tokens"** — reasoning models spend tokens on thinking; give that model more room in `llm.per_model` (Groq models must keep prompt + `max_tokens` under the 8k tokens-per-minute limit, other providers may not have such a limit).
 - **"daily limit -- switching to …" / "every model is used up"** — free tiers cap tokens or requests per day (Groq: 200k tokens per model, roughly 30 judged jobs for `gpt-oss-120b`; OpenRouter free models: 50 requests per day in total). Add fallback models in `.env`; whatever stays pending is judged by the next run or `python src/utils/llm_judge.py` the next day.
@@ -263,3 +268,5 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 - More sources (e.g. job APIs).
 
 > **Project Status:** work in progress — ongoing development.
+
+Place coordinates for the search-area check: [GeoNames](https://www.geonames.org/) postal code data (`resources/places_de.csv`), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

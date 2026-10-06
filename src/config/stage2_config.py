@@ -9,6 +9,12 @@ stage2_config = {
     "max_posting_age_days": 60, # older postings are marked expired and not judged
     "throttle": {
         "between_detail_pages": {"min_seconds": 3.0, "max_seconds": 8.0},
+        "after_connection_error": {"min_seconds": 90.0, "max_seconds": 150.0}, # stepstone drops connections when it wants a break
+    },
+    "search_area": {"latitude": 49.4875, "longitude": 8.4660, "radius_km": 100}, # Mannheim; postings farther away are not judged, None turns it off
+    "verdict": {
+        "empty_details_below": 40, # details are cleared below this fit, as the prompt asks
+        "max_fit_with_missing_must_haves": {"count": 2, "fit": 84}, # 2+ missing must-haves cap the score, None turns it off
     },
     "dedup": {
         "description_containment": 0.90, # same company + this much of the shorter ad inside the other = same job
@@ -20,6 +26,7 @@ stage2_config = {
         "response_format": "json_schema", # or "json_object" / None
         "per_model": { # temperature / max_tokens / response_format for single models, named as in .env
             "nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 8000}, # long reasoning; openrouter has no tokens/min cap
+            "qwen/qwen3.8-27b": {"max_tokens": 1500}, # needs ~1k, a smaller reservation means fewer tokens/min waits
         },
         "timeout_seconds": 120,
         "max_consecutive_failures": 3,

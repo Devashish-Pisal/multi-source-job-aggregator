@@ -11,8 +11,8 @@ def random_delay(min_seconds: float, max_seconds: float, reason: str = "") -> No
     time.sleep(delay)
 
 
-def delay_between_queries(config: dict) -> None:
-    cfg = config["throttle_config"]["between_queries"]
+def delay_between_queries(config: dict, site_range: dict | None = None) -> None:
+    cfg = site_range or config["throttle_config"]["between_queries"] # a site may ask for a slower pace
     random_delay(cfg["min_seconds"], cfg["max_seconds"], "between queries")
 
 
@@ -34,6 +34,11 @@ def delay_between_sources(config: dict) -> None:
 def delay_between_detail_pages(config: dict) -> None:
     cfg = config["throttle"]["between_detail_pages"]
     random_delay(cfg["min_seconds"], cfg["max_seconds"], "between detail pages")
+
+
+def delay_after_connection_error(config: dict) -> None:
+    cfg = config["throttle"]["after_connection_error"]
+    random_delay(cfg["min_seconds"], cfg["max_seconds"], "after a dropped connection")
 
 
 def delay_between_llm_calls(config: dict) -> None:

@@ -38,6 +38,9 @@ indeed_scraper_config = {
         #"Viernheim, Hessen": 5,
     },
     "job_age": 14, # 1, 3, 7, 14; weekly runs 7, catch-up 14
+    # indeed shows a security check after ~30 quick queries, so fewer and slower ones
+    "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the common list
+    "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
 
     # selectors
     "cookie_button": "button[id='onetrust-reject-all-handler']", # reject-all button
