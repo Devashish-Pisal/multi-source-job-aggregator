@@ -169,8 +169,9 @@ Nothing about your situation is hard-coded. These are the places to change:
 | `dedup.description_containment` | share of the shorter description that must appear in the other for two ads of the same company to count as one job (0–1; raise it if different jobs get merged) |
 | `llm.temperature`, `llm.max_tokens` | request parameters, the defaults for every model; `None` omits one (some reasoning models reject `temperature`). Reasoning models need room: `gpt-oss-120b` uses ~2,350 completion tokens per verdict |
 | `llm.response_format` | `"json_schema"` (the provider enforces the verdict schema), `"json_object"` or `None` for providers that reject the stricter modes; the reply is validated either way |
-| `llm.per_model` | overrides of `temperature`, `max_tokens` and `response_format` for single models, keyed by the model name as written in `.env`, e.g. `{"nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 8000}}`. An unknown key stops the judge pass with an error; an entry for a model that is not in `.env` is reported as a warning |
-| `llm.timeout_seconds`, `llm.max_consecutive_failures`, `llm.delay_between_calls` | judge pass safety valves |
+| `llm.per_model` | overrides of `temperature`, `max_tokens` and `response_format` for single models, keyed by the model name as written in `.env`, e.g. `{"nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 12000}}`. An unknown key stops the judge pass with an error; an entry for a model that is not in `.env` is reported as a warning |
+| `llm.timeout_seconds`, `llm.max_consecutive_failures`, `llm.delay_between_calls` | judge pass safety valves; the timeout must cover the slowest model's longest answer |
+| `llm.connection_error_pause_seconds` | after a dropped connection the same call is retried once after this pause (a timeout is not retried) |
 | `llm.rate_limit_retries`, `llm.rate_limit_pause_seconds` | on HTTP 429 (rate limit) the judge waits and retries the same job instead of failing it |
 | `llm.rate_limit_max_wait_seconds` | a longer requested wait (or a message naming a daily limit) means the model is used up for today; the next model takes over |
 

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from loguru import logger
-from openai import OpenAI, AuthenticationError, PermissionDeniedError, NotFoundError, RateLimitError
+from openai import OpenAI, APIConnectionError, APITimeoutError, AuthenticationError, PermissionDeniedError, NotFoundError, RateLimitError
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from config.path_config import PROJECT_ROOT
@@ -314,9 +314,16 @@ def rate_limit_wait(exc: RateLimitError) -> float | None:
 
 def judge_with_rate_limit_pauses(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
     llm = stage2_config["llm"]
+    reconnected = False
     for attempt in range(llm["rate_limit_retries"] + 1):
         try:
             return judge_job(judge, system_prompt, resume, job)
+        except APIConnectionError as exc:
+            if isinstance(exc, APITimeoutError) or reconnected or attempt == llm["rate_limit_retries"]:
+                raise # a timeout is a slow model, not a dropped line
+            reconnected = True
+            logger.info(f"[LLM Judge] Connection error on '{judge['model']}', retrying '{job['title']}' in {llm['connection_error_pause_seconds']} s")
+            time.sleep(llm["connection_error_pause_seconds"])
         except RateLimitError as exc:
             wait = rate_limit_wait(exc)
             if DAILY_LIMIT_PATTERN.search(str(exc)) or (wait or 0) > llm["rate_limit_max_wait_seconds"]:

@@ -22,7 +22,7 @@ One JSON object. Use "" or [] when the posting does not say. Lists hold at most 
 - matched_skills: skills the posting asks for that the résumé shows
 - missing_must_haves: stated must-haves the résumé does not show
 - reason: one sentence
-- details: only what the posting itself states, never skills from the résumé; all lists and texts empty if fit_score < 40
+- details: only what the posting itself states, never skills from the résumé; always include all four groups with every key, and if fit_score < 40 keep them with every list [] and text "" (work_model unspecified)
   - requirements: must_have, nice_to_have, tech_stack, keywords (key terms of the posting), education (degree, fields of study, semester or enrolment), soft_skills, experience (prior experience asked for)
   - role: responsibilities, team, company_summary (one sentence), projects (concrete projects, use cases or products), learning (training, mentoring), prospects (what can follow, e.g. a thesis or a permanent position)
   - company: industry, products (products or services), values (stated values and culture), size (employees or sites, as stated), benefits

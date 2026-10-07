@@ -25,13 +25,14 @@ stage2_config = {
         "max_tokens": 3200, # 120b needs ~2350; prompt + this must fit 8k tokens/min
         "response_format": "json_schema", # or "json_object" / None
         "per_model": { # temperature / max_tokens / response_format for single models, named as in .env
-            "nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 8000}, # long reasoning; openrouter has no tokens/min cap
+            "nvidia/nemotron-3-super-120b-a12b:free": {"max_tokens": 12000}, # long reasoning (~125 tokens/s); openrouter has no tokens/min cap
             "qwen/qwen3.8-27b": {"max_tokens": 1500}, # needs ~1k, a smaller reservation means fewer tokens/min waits
         },
-        "timeout_seconds": 120,
+        "timeout_seconds": 180, # nemotron needs ~100 s for 12000 tokens
         "max_consecutive_failures": 3,
         "delay_between_calls": {"min_seconds": 2.0, "max_seconds": 3.0},
         "rate_limit_retries": 3, # on HTTP 429, wait and try the same job again
+        "connection_error_pause_seconds": 10, # one retry after a dropped connection
         "rate_limit_pause_seconds": 60, # when the provider gives no wait time
         "rate_limit_max_wait_seconds": 120, # a longer wait means the daily limit, so the next model takes over
     },
