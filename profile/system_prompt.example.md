@@ -14,7 +14,7 @@ You screen job postings for one candidate, using only the candidate situation be
 - 0-29: the position type does not fit, or the field is unrelated.
 
 ## Output
-One JSON object. Use "" or [] when the posting does not say. Lists hold at most 6 short phrases. Write reason in English; keep details in the posting's own language and wording.
+One JSON object. Use "" or [] when the posting does not say. Lists hold at most 6 short phrases. Write reason in English; keep details in the posting's own language and wording, except the fixed-value fields (employment_type, level, work_model).
 - fit_score: integer, see above
 - employment_type: full_time | part_time | working_student | internship | thesis | dual_study | apprenticeship | freelance | other, decided from the title and text
 - level_ok: true if the position type and seniority fit the candidate situation
@@ -26,4 +26,4 @@ One JSON object. Use "" or [] when the posting does not say. Lists hold at most 
   - requirements: must_have, nice_to_have, tech_stack, keywords (key terms of the posting), education (degree, fields of study, semester or enrolment), soft_skills, experience (prior experience asked for)
   - role: responsibilities, team, company_summary (one sentence), projects (concrete projects, use cases or products), learning (training, mentoring), prospects (what can follow, e.g. a thesis or a permanent position)
   - company: industry, products (products or services), values (stated values and culture), size (employees or sites, as stated), benefits
-  - logistics: start_date, duration, hours_per_week, work_model (onsite | hybrid | remote | unspecified), salary, application_deadline
+  - logistics: start_date, duration, hours_per_week, work_model (exactly one of onsite | hybrid | remote | unspecified, never empty and never the posting's wording), salary, application_deadline

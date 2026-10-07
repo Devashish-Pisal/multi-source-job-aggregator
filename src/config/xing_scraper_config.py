@@ -53,6 +53,7 @@ xing_scraper_config = {
         "location": ["[data-testid='company-card-location']"],
         "junk_lines": ["null", "Jetzt bewerben", "Bewerbung starten mit LinkedIn", "Bitte warten..."], # dropped from descriptions
         "footer_markers": ["Anstellungsart"], # short footer block cut off
-        "expired_signatures": ["nicht mehr verfügbar", "nicht mehr online", "ist abgelaufen", "no longer available", "wurde deaktiviert"],
+        "expired_signatures": ["nicht mehr verfügbar", "nicht mehr online", "ist abgelaufen", "no longer available", "wurde deaktiviert",
+                               "this job ad isn't available", "this job ad isn’t available", "stellenanzeige ist nicht verfügbar"], # lowercase
     },
 }

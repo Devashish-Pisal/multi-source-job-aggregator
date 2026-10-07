@@ -40,6 +40,15 @@ def _lowercase(value):
     return value.strip().lower() if isinstance(value, str) else value
 
 
+def _work_model(value):
+    text = value.strip().lower() if isinstance(value, str) else ""
+    remote = re.search(r"remote|home.?office|mobil", text)
+    onsite = re.search(r"onsite|on-site|vor ort|präsenz|büro|office", re.sub(r"home.?office", "", text))
+    if "hybrid" in text or (remote and onsite):
+        return "hybrid"
+    return "remote" if remote else "onsite" if onsite else "unspecified" # also "" and the posting's own wording
+
+
 def _blank_placeholders(value):
     if isinstance(value, list):
         return [item for item in (_blank_placeholders(v) for v in value) if item != ""]
@@ -96,11 +105,11 @@ class Logistics(StrictModel):
     start_date: str
     duration: str
     hours_per_week: str
-    work_model: Literal["onsite", "hybrid", "remote", "unspecified"]
+    work_model: str # free text for the provider, so "" or the posting's wording cannot fail the call
     salary: str
     application_deadline: str
 
-    _lowercase_work_model = field_validator("work_model", mode="before")(_lowercase)
+    _work_model = field_validator("work_model", mode="after")(_work_model) # stored as onsite / hybrid / remote / unspecified
     _blank = field_validator("start_date", "duration", "hours_per_week", "salary", "application_deadline", mode="before")(_blank_placeholders)
 
 
@@ -137,7 +146,7 @@ def blank(model: type[BaseModel]) -> dict:
             values[name] = blank(field.annotation)
         else:
             values[name] = [] if get_origin(field.annotation) is list else "unspecified" if get_origin(field.annotation) is Literal else ""
-    return values
+    return model.model_validate(values).model_dump()
 
 
 def apply_verdict_rules(verdict: JobVerdict) -> dict:

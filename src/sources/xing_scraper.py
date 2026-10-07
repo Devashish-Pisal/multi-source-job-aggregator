@@ -239,6 +239,14 @@ class XingScraper:
                             logger.info(f"[Xing Scraper] Scraped description via {job['description_source']} ({len(job['description'])} chars) for '{job['title']}' at '{job['company']}'{note} | URL: {url}")
                         consecutive_failures = 0
                     except Exception as exc:
+                        late_expiry = detect_expired_page(page, None, XING_EXPIRED_PATTERN) # xing shows "isn't available" after loading
+                        if late_expiry:
+                            mark_description_expired(job["id"])
+                            job["description_status"] = "expired"
+                            logger.info(f"[Xing Scraper] Job posting expired ({late_expiry}) | URL: {url}")
+                            consecutive_failures = 0
+                            delay_between_detail_pages(stage2_config)
+                            continue
                         consecutive_failures += 1
                         error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
                         job["description_status"] = record_description_failure(job["id"], max_attempts)
