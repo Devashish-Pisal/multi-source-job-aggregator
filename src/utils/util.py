@@ -112,7 +112,7 @@ BLOCK_PAGE_TEXT_PATTERN = re.compile(
     r"|zugriff verweigert|too many requests|zu viele anfragen|prove you are human|additional verification required"
 )
 CONNECTION_ERROR_PATTERN = re.compile(r"net::ERR_(?:HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|EMPTY_RESPONSE|NETWORK_CHANGED|TIMED_OUT|CONNECTION_TIMED_OUT|SOCKET_NOT_CONNECTED)")
-BLOCK_PAGE_URL_PATTERN = re.compile(r"captcha|/challenge|/blocked|access-denied|/sorry/|/distil_r_captcha")
+BLOCK_PAGE_URL_PATTERN = re.compile(r"captcha|/challenge|/blocked|access-denied|/sorry/|/distil_r_captcha|/authwall")
 BLOCK_PAGE_SELECTORS = [
     "#challenge-running",
     "#challenge-form",

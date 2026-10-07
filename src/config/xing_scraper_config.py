@@ -38,6 +38,8 @@ xing_scraper_config = {
     "job_age": "LAST_MONTH", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
+    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[data-action-type='accept'][id='accept']", # accept button

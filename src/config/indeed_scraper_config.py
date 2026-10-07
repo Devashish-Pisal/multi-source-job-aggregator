@@ -41,6 +41,8 @@ indeed_scraper_config = {
     # indeed shows a security check after ~30 quick queries, so fewer and slower ones
     "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the common list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
+    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[id='onetrust-reject-all-handler']", # reject-all button

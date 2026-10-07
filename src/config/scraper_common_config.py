@@ -6,6 +6,7 @@ scraper_common_config = {
     "use_stepstone_scraper": True,
     "use_xing_scraper": True,
     "use_study_smarter_scraper": True,
+    "use_linkedin_scraper": True,
 
     # 1 = search pages, 2 = job pages + judge
     "run_stage_1": False,

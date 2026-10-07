@@ -39,6 +39,8 @@ stepstone_scraper_config = {
     "job_age": 7, # 1 or 7 (max)
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
+    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[id='ccmgt_explicit_accept']", # unverified

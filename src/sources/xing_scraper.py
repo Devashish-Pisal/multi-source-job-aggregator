@@ -49,7 +49,7 @@ class XingScraper:
 
     def run_description_scraper(self):
         if scraper_common_config["use_xing_scraper"]:
-            limit = stage2_config["max_detail_pages_per_platform"]
+            limit = xing_scraper_config["max_detail_pages"] or stage2_config["max_detail_pages_per_platform"]
             pending_jobs = jobs_pending_description("xing", limit)
             logger.info(f"[Xing Scraper] {len(pending_jobs)} job detail pages pending (at most {limit} per run)")
             if pending_jobs:
@@ -245,7 +245,7 @@ class XingScraper:
                             job["description_status"] = "expired"
                             logger.info(f"[Xing Scraper] Job posting expired ({late_expiry}) | URL: {url}")
                             consecutive_failures = 0
-                            delay_between_detail_pages(stage2_config)
+                            delay_between_detail_pages(stage2_config, xing_scraper_config["between_detail_pages"])
                             continue
                         consecutive_failures += 1
                         error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
@@ -258,7 +258,7 @@ class XingScraper:
                             saved = sum(1 for j in scraped_jobs if j["description_status"] == "ok")
                             logger.error(f"[Xing Scraper] Circuit breaker tripped -- {why}. Aborting description scraping with {remaining} of {len(jobs)} detail pages unvisited (they stay pending for the next run) so a blocking site is not hammered further; {saved} descriptions saved so far are kept. Current page URL: {page.url}")
                             break
-                    delay_between_detail_pages(stage2_config)
+                    delay_between_detail_pages(stage2_config, xing_scraper_config["between_detail_pages"])
                 else:
                     logger.info(f"[Xing Scraper] Browser session completed successfully, all {len(jobs)} detail pages visited.")
             finally:

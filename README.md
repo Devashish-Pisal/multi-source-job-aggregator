@@ -4,7 +4,7 @@ Searches several German job boards in one run, keeps the postings whose titles m
 
 ```mermaid
 flowchart LR
-    A[Search pages<br/>Stepstone · Indeed<br/>Xing · StudySmarter] -->|titles| B{Title matches your<br/>topics and level?}
+    A[Search pages<br/>Stepstone · Indeed · Xing<br/>StudySmarter · LinkedIn] -->|titles| B{Title matches your<br/>topics and level?}
     B -->|no| R[data/rejected/*.csv]
     B -->|yes| D[(SQLite<br/>data/database/app.db)]
     D -->|pending URLs| E[Posting page<br/>JSON-LD / CSS]
@@ -28,6 +28,7 @@ flowchart LR
 | Indeed (`de.indeed.com`) | Playwright browser scraper |
 | Xing Jobs | Playwright browser scraper |
 | StudySmarter Talents (student jobs) | Playwright browser scraper |
+| LinkedIn Jobs (public job search, no login) | Playwright browser scraper |
 
 Each scraper can be switched on or off with the `use_<site>_scraper` knobs in `src/config/scraper_common_config.py`.
 
@@ -41,7 +42,7 @@ Each scraper can be switched on or off with the `use_<site>_scraper` knobs in `s
 
 **Stage 2 – description, de-duplication and judge**
 
-4. For every stored job without a description (best title score first, at most `max_detail_pages_per_platform` per site and run) the posting page is opened in the same Chrome profile. Company, location, posting date and description come from the page's `JobPosting` JSON-LD block, with CSS selectors as fallback; board clutter (apply buttons, footers) is removed. Expired postings — and postings older than `max_posting_age_days` (60), which some boards keep listing for years — are marked expired and never judged. Every page is saved immediately.
+4. For every stored job without a description (best title score first, at most `max_detail_pages_per_platform` per site and run) the posting page is opened in the same Chrome profile. Company, location, posting date and description come from the page's `JobPosting` JSON-LD block, with CSS selectors as fallback (LinkedIn has no JSON-LD: its fields come from CSS selectors, its posting date from the "Vor 1 Woche" line); board clutter (apply buttons, footers) is removed. Expired postings — and postings older than `max_posting_age_days` (60), which some boards keep listing for years — are marked expired and never judged. Every page is saved immediately.
 5. **De-duplication.** Title and company are stored exactly as the posting writes them; the location is stored normalised (lowercase, postcodes removed). For matching, title and company are normalised too (lowercase, gender tags such as "(m/w/d)", legal forms such as "GmbH & Co. KG" and "Deutschland" dropped), giving a readable key such as `io consultants|werkstudent data analytics simulation|heidelberg`. A posting is the same job as a stored one when
    - the key is identical (the same job re-posted, or posted on two boards under the same title), or
    - the company matches (same first word, so "Döhler" and "Döhler Group" count as one) and at least `dedup.description_containment` (90%) of the shorter description's word sequences appear in the other — this catches copies whose title wording or city order differs, and short teaser versions of a full ad, while different jobs of the same company (which share boilerplate) stay apart.
@@ -62,7 +63,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-1. **Browser profile.** Set `browser_profile_path` in `src/config/scraper_common_config.py` to a directory Chrome may use as its profile. Open the job sites once in that profile and accept their cookie banners; a warmed-up profile is what keeps the anti-bot checks quiet. Close that Chrome before running the pipeline.
+1. **Browser profile.** Set `browser_profile_path` in `src/config/scraper_common_config.py` to a directory Chrome may use as its profile. Open the job sites once in that profile and accept their cookie banners; a warmed-up profile is what keeps the anti-bot checks quiet. Stay logged out of LinkedIn in this profile: the scraper reads LinkedIn's public job pages, and an account used for scraping can be restricted. Close that Chrome before running the pipeline.
 2. **Your profile for the judge.** Copy the two templates and adapt them:
    ```bash
    cp profile/system_prompt.example.md profile/system_prompt.md
@@ -87,7 +88,7 @@ pip install -r requirements.txt
    python src/main.py
    ```
 
-The first run downloads the embedding model (~2 GB). A full stage-1 run over all four sites with the default 10 location tiles and 13 keywords is 520 queries, roughly 95 minutes with the default throttling; stage 2 adds about 10 s per new posting.
+The first run downloads the embedding model (~2 GB). A full stage-1 run is 445 queries: 130 each on Stepstone, Xing and StudySmarter (10 location tiles × 13 keywords), 50 on Indeed and 5 on LinkedIn (their own shorter keyword lists, paced slowly) — roughly two hours with the default throttling. Stage 2 adds about 10 s per new posting (LinkedIn: at most 20 postings per run, 10–20 s apart).
 
 `run_stage_1` / `run_stage_2` in `src/config/scraper_common_config.py` switch either stage off; stage 2 alone scrapes and judges whatever is still pending. To run a single scraper (stage 1 then stage 2 for that site, without the judge) or only the judge pass:
 
@@ -115,7 +116,7 @@ Nothing about your situation is hard-coded. These are the places to change:
 |------|-------|
 | Who you are and what you look for (student / graduate / experienced, role types, seniority, languages, hours, what does *not* fit) and how postings are scored | `profile/system_prompt.md` — the *Candidate situation* section and the *fit_score guide*. Keep the *Output* section's keys unchanged; the reply is validated against them |
 | Your résumé | `profile/resume.md` (plain text or markdown — you control exactly what the judge sees) |
-| What is searched on the sites | `search_keywords` in `src/config/scraper_common_config.py` — keep it short, every entry costs one page load per location tile. A site config can set its own shorter `search_keywords` (Indeed does, it blocks quick bursts) |
+| What is searched on the sites | `search_keywords` in `src/config/scraper_common_config.py` — keep it short, every entry costs one page load per location tile. A site config can set its own shorter `search_keywords` (Indeed and LinkedIn do, they block quick bursts) |
 | What titles are scored against | `match_keywords` in the same file — never sent to a site, so it can be broad (niche phrasings, other languages) |
 | Which job levels are accepted at all | `title_required_words` in the same file — a title must contain one of these whole words (e.g. werkstudent, praktikum, internship, thesis for students; junior, senior, … for others). A trailing `*` also matches longer forms (`praktik*` → Praktikum, Praktikantin, Praktika), a leading `*` also matches compounds (`*buchhalt*` → Finanzbuchhaltung). `[]` switches it off |
 | Which fields are never wanted | `title_excluded_words` — titles containing one of these words are rejected (e.g. sales, customer support, PhD, marketing, dual study). `[]` switches it off |
@@ -145,11 +146,12 @@ Nothing about your situation is hard-coded. These are the places to change:
 | Key | Meaning |
 |-----|---------|
 | `BASE_URL` | search URL template |
-| `location_radius_pairs` | location tiles to query; with page 1 only, overlapping circles return the same page again |
+| `location_radius_pairs` | location tiles to query; with page 1 only, overlapping circles return the same page again. Radii are in km, on LinkedIn in miles |
 | `job_age` | posting age filter |
-| `use_headless_mode` | keep `False` for Indeed, Xing and Stepstone – they block headless browsers |
+| `use_headless_mode` | keep `False` for Indeed, Xing, Stepstone and LinkedIn – they block headless browsers |
 | `search_keywords`, `between_queries` | this site's own keyword list and delay between queries; `None` uses the common ones |
-| `cookie_button` | cookie-banner button clicked when visible (`None` = no handling) |
+| `max_detail_pages`, `between_detail_pages` | this site's own number of posting pages per run and delay between them (stage 2); `None` uses `max_detail_pages_per_platform` and `throttle.between_detail_pages` from `stage2_config.py` |
+| `cookie_button` | cookie-banner button clicked when visible (`None` = no handling); LinkedIn also has `modal_dismiss_button` for its sign-in popup |
 | `search_page` | selectors for the results page (stage 1) |
 | `detail_page` | selectors and expired-page phrases for the posting page (stage 2); `description` / `company` / `location` are fallback lists, first match wins |
 
@@ -158,10 +160,10 @@ Nothing about your situation is hard-coded. These are the places to change:
 | Key | Meaning |
 |-----|---------|
 | `system_prompt_path`, `resume_path` | the judge's prompt and your résumé (default `profile/system_prompt.md`, `profile/resume.md`) |
-| `max_detail_pages_per_platform` | posting pages per site and run; the rest stay pending for the next run |
+| `max_detail_pages_per_platform` | posting pages per site and run (a site config's `max_detail_pages` overrides it); the rest stay pending for the next run |
 | `max_description_attempts` | failed page loads before a URL is given up on |
 | `max_description_chars` | longer descriptions are cut before judging (keeps prompt + `max_tokens` under a tokens-per-minute limit) |
-| `throttle.between_detail_pages` | random delay between posting pages |
+| `throttle.between_detail_pages` | random delay between posting pages (a site config's `between_detail_pages` overrides it) |
 | `throttle.after_connection_error` | pause before retrying a posting page once when the site drops the connection (Stepstone does this when it wants a break) |
 | `search_area` | `latitude`, `longitude`, `radius_km` of the area you want; postings outside it are not judged (`None` turns the check off) |
 | `verdict.empty_details_below`, `verdict.max_fit_with_missing_must_haves` | rules applied to every verdict (see step 6) |
@@ -196,7 +198,7 @@ A CSV with no rows is not written.
 | `id` | primary key |
 | `url` | posting URL (tracking parameters removed); unique |
 | `other_urls` | JSON list of the URLs of duplicates folded into this job (other boards, re-posts) |
-| `platform` | `stepstone`, `indeed`, `xing`, `study_smarter` |
+| `platform` | `stepstone`, `indeed`, `xing`, `study_smarter`, `linkedin` |
 | `company` | exactly as the posting writes it, e.g. `io-consultants GmbH & Co. KG` |
 | `title` | exactly as the posting writes it, e.g. `Werkstudent Data Analytics / Simulation (m/w/d)` |
 | `location` | normalised: lowercase, postcodes dropped |
@@ -253,6 +255,7 @@ To have a job judged again (e.g. after changing the prompt), set its `judge_mode
 - **The browser hangs at start or fails on the profile lock** — another Chrome still uses the profile directory; close it completely.
 - **A site's circuit breaker trips** — the site is blocking. Raise the delays in `throttle_config` / `throttle.between_detail_pages` (or that site's `between_queries`), give it a shorter `search_keywords` list, or run it less often.
 - **"Security Check - Indeed.com"** — Indeed wants a human check. Open Chrome by hand on the scraping profile (see *Browser profile* under setup), open any Indeed page, pass the check, quit Chrome completely, then run again.
+- **LinkedIn's sign-in page (`/authwall` in the URL)** — LinkedIn gives visitors who are not logged in only a few dozen page loads; the circuit breaker stops LinkedIn and the other sites carry on. Its pending postings are read by later runs (`max_detail_pages`, 20 per run), so running stage 2 daily works through them. Wait a few hours; do not log in to get around it.
 - **The judge fails with HTTP 400 about the response format** — the provider or model does not support JSON schemas; set `"response_format": "json_object"` (or `None`) for that model in `llm.per_model`, or in `llm.response_format` for all.
 - **"response cut off at max_tokens"** — reasoning models spend tokens on thinking; give that model more room in `llm.per_model` (Groq models must keep prompt + `max_tokens` under the 8k tokens-per-minute limit, other providers may not have such a limit).
 - **"daily limit -- switching to …" / "every model is used up"** — free tiers cap tokens or requests per day (Groq: 200k tokens per model, roughly 30 judged jobs for `gpt-oss-120b`; OpenRouter free models: 50 requests per day in total). Add fallback models in `.env`; whatever stays pending is judged by the next run or `python src/utils/llm_judge.py` the next day.

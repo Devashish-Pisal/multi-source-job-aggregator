@@ -1,10 +1,13 @@
 import json
 import re
+from datetime import date, timedelta
 from html import unescape
 
 JSON_LD_SCRIPT_PATTERN = re.compile(r"<script[^>]*type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>", re.S | re.I)
 BLOCK_TAG_PATTERN = re.compile(r"</?(?:p|div|br|li|ul|ol|h[1-6]|tr|table|section|article|blockquote)\b[^>]*>", re.I)
 TAG_PATTERN = re.compile(r"<[^>]+>")
+AGE_TEXT_PATTERN = re.compile(r"(\d+)\s*(minute|min|stunde|std|hour|tag|day|woche|week|monat|month|jahr|year)", re.I)
+AGE_UNIT_DAYS = {"minute": 0, "min": 0, "stunde": 0, "std": 0, "hour": 0, "tag": 1, "day": 1, "woche": 7, "week": 7, "monat": 30, "month": 30, "jahr": 365, "year": 365}
 
 
 def html_to_text(html: str) -> str:
@@ -83,6 +86,14 @@ def _employment_type_text(employment_type) -> str | None:
 def _date_only(value) -> str | None:
     match = re.match(r"\d{4}-\d{2}-\d{2}", str(value or "").strip())
     return match.group(0) if match else None
+
+
+def date_from_age_text(text: str | None) -> str | None:
+    match = AGE_TEXT_PATTERN.search(text or "") # "Vor 2 Wochen", "3 days ago"
+    if not match:
+        return None
+    days = int(match.group(1)) * AGE_UNIT_DAYS[match.group(2).lower()]
+    return (date.today() - timedelta(days=days)).isoformat()
 
 
 def parse_job_posting_json_ld(html: str) -> dict | None:

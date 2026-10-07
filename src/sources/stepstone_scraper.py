@@ -51,7 +51,7 @@ class StepstoneScraper:
 
     def run_description_scraper(self):
         if scraper_common_config["use_stepstone_scraper"]:
-            limit = stage2_config["max_detail_pages_per_platform"]
+            limit = stepstone_scraper_config["max_detail_pages"] or stage2_config["max_detail_pages_per_platform"]
             pending_jobs = jobs_pending_description("stepstone", limit)
             logger.info(f"[Stepstone Scraper] {len(pending_jobs)} job detail pages pending (at most {limit} per run)")
             if pending_jobs:
@@ -247,7 +247,7 @@ class StepstoneScraper:
                             saved = sum(1 for j in scraped_jobs if j["description_status"] == "ok")
                             logger.error(f"[Stepstone Scraper] Circuit breaker tripped -- {why}. Aborting description scraping with {remaining} of {len(jobs)} detail pages unvisited (they stay pending for the next run) so a blocking site is not hammered further; {saved} descriptions saved so far are kept. Current page URL: {page.url}")
                             break
-                    delay_between_detail_pages(stage2_config)
+                    delay_between_detail_pages(stage2_config, stepstone_scraper_config["between_detail_pages"])
                 else:
                     logger.info(f"[Stepstone Scraper] Browser session completed successfully, all {len(jobs)} detail pages visited.")
             finally:

@@ -38,6 +38,8 @@ sss_config = {
     "job_age": 30, # 1, 7, 30; weekly runs 7, catch-up 30
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
+    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": None, # no cookie banner

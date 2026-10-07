@@ -13,6 +13,7 @@ from sources.stepstone_scraper import StepstoneScraper
 from sources.indeed_scraper import IndeedScraper
 from sources.xing_scraper import XingScraper
 from sources.study_smarter_scraper import StudySmarterScraper
+from sources.linkedin_scraper import LinkedInScraper
 from utils.util import load_embedding_model_and_keyword_embeddings
 from utils.throttle import delay_between_sources
 from utils.db import init_db, upsert_stage1_jobs, jobs_pending_judge, db_summary
@@ -23,6 +24,7 @@ SCRAPER_CLASSES = {
     "study_smarter": StudySmarterScraper,
     "indeed": IndeedScraper,
     "xing": XingScraper,
+    "linkedin": LinkedInScraper, # last, so a job on several boards keeps the other board's row
 }
 
 JOB_CSV_COLUMNS = ["title", "url", "title_score", "matched_keyword", "platform"]

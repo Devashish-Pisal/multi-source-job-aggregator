@@ -31,8 +31,8 @@ def delay_between_sources(config: dict) -> None:
     random_delay(cfg["min_seconds"], cfg["max_seconds"], "between sources")
 
 
-def delay_between_detail_pages(config: dict) -> None:
-    cfg = config["throttle"]["between_detail_pages"]
+def delay_between_detail_pages(config: dict, site_range: dict | None = None) -> None:
+    cfg = site_range or config["throttle"]["between_detail_pages"] # a site may ask for a slower pace
     random_delay(cfg["min_seconds"], cfg["max_seconds"], "between detail pages")
 
 
