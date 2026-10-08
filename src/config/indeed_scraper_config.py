@@ -3,7 +3,7 @@ indeed_scraper_config = {
     "BASE_URL": "https://de.indeed.com/jobs?q={keywords}&l={location}&fromage={job_age}&radius={radius}&sort=date", # newest first
     "location_radius_pairs": {
         # Allowed radius lengths for indeed are : 0, 5, 10, 15, 25, 35, 40, 50, 100
-        # non-overlapping tiles within ~150 km of Mannheim, only page 1 is read; a radius is limited by its neighbour
+        # ten hubs around Mannheim, circles must not overlap
         "Mannheim, Baden-Württemberg": 25, # + Heidelberg, Ludwigshafen, Worms, Speyer, Walldorf
         "Darmstadt, Hessen": 10, # 45 km
         "Kaiserslautern, Rheinland-Pfalz": 25, # 52 km
@@ -14,11 +14,11 @@ indeed_scraper_config = {
         "Stuttgart, Baden-Württemberg": 25, # 95 km, + Böblingen, Ludwigsburg, Esslingen
         "Saarbrücken, Saarland": 25, # 110 km
         "Würzburg, Bayern": 25, # 112 km
-        # more cities, still non-overlapping (Tübingen and Pforzheim have no room next to Stuttgart / Karlsruhe)
+        # more cities, still non-overlapping
         #"Gießen, Hessen": 25,
         #"Koblenz, Rheinland-Pfalz": 25,
         #"Aschaffenburg, Bayern": 15,
-        # inside the Mannheim circle; add one only if the run summary shows full first pages
+        # inside the Mannheim circle, only if page 1 fills up
         #"Heidelberg, Baden-Württemberg": 15, # + Walldorf, Sandhausen
         #"Speyer, Rheinland-Pfalz": 10, # + Hockenheim, Schifferstadt
         #"Worms, Rheinland-Pfalz": 10,
@@ -38,10 +38,10 @@ indeed_scraper_config = {
         #"Viernheim, Hessen": 5,
     },
     "job_age": 14, # 1, 3, 7, 14; weekly runs 7, catch-up 14
-    # indeed shows a security check after ~30 quick queries, so fewer and slower ones
+    # indeed blocks fast runs, so fewer and slower queries
     "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the common list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
-    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors

@@ -105,7 +105,7 @@ class Logistics(StrictModel):
     start_date: str
     duration: str
     hours_per_week: str
-    work_model: str # free text for the provider, so "" or the posting's wording cannot fail the call
+    work_model: str # free text, normalised below
     salary: str
     application_deadline: str
 

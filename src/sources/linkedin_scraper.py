@@ -238,7 +238,7 @@ class LinkedInScraper:
                                 fields["company"] = first_inner_text(page, detail["company"])
                             if not fields.get("location"):
                                 location = first_inner_text(page, detail["location"])
-                                fields["location"] = location.split(",")[0] if location else None # town only, the state would hide it from the area check
+                                fields["location"] = location.split(",")[0] if location else None # town only, for the area check
                             if not fields.get("date_posted"):
                                 fields["date_posted"] = date_from_age_text(first_inner_text(page, detail["date_posted"]))
                             if not fields["description"]:

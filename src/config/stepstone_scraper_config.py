@@ -3,7 +3,7 @@ stepstone_scraper_config = {
     "BASE_URL": "https://www.stepstone.de/jobs/{keywords}/in-{location}?radius={radius}&action=facet_selected%3bage%3bage_1&ag=age_{job_age}&searchOrigin=Resultlist_top-search",
     "location_radius_pairs" : {
         # Allowed radius lengths for stepstone are : 5, 10, 20, 30, 40, 50, 75, 100
-        # non-overlapping tiles within ~150 km of Mannheim, only page 1 is read; a radius is limited by its neighbour
+        # ten hubs around Mannheim, circles must not overlap
         "Mannheim": 30, # + Heidelberg, Ludwigshafen, Worms, Speyer, Walldorf
         "Darmstadt": 5, # 45 km, small next to Frankfurt
         "Kaiserslautern": 20, # 52 km
@@ -14,12 +14,12 @@ stepstone_scraper_config = {
         "Stuttgart": 20, # 95 km, + Böblingen, Ludwigsburg, Esslingen
         "Saarbrücken": 20, # 110 km
         "Würzburg": 20, # 112 km
-        # more cities, still non-overlapping (Pforzheim has no room next to Karlsruhe)
+        # more cities, still non-overlapping
         #"Gießen": 20,
         #"Koblenz": 20,
         #"Aschaffenburg": 10,
         #"Tübingen": 5,
-        # inside the Mannheim circle; add one only if the run summary shows full first pages
+        # inside the Mannheim circle, only if page 1 fills up
         #"Heidelberg": 20, # + Walldorf, Sandhausen
         #"Speyer": 10, # + Hockenheim, Schifferstadt
         #"Worms": 10,
@@ -39,7 +39,7 @@ stepstone_scraper_config = {
     "job_age": 7, # 1 or 7 (max)
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
-    "max_detail_pages": None, # posting pages per run, None = max_detail_pages_per_platform in stage2_config
+    "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors

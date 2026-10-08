@@ -24,7 +24,7 @@ SCRAPER_CLASSES = {
     "study_smarter": StudySmarterScraper,
     "indeed": IndeedScraper,
     "xing": XingScraper,
-    "linkedin": LinkedInScraper, # last, so a job on several boards keeps the other board's row
+    "linkedin": LinkedInScraper, # last, so other boards win duplicates
 }
 
 JOB_CSV_COLUMNS = ["title", "url", "title_score", "matched_keyword", "platform"]

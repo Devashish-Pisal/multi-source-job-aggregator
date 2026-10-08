@@ -23,7 +23,7 @@ def place_index() -> dict[str, list[tuple[float, float]]]:
         for row in csv.DictReader(file):
             tokens = normalize_location(row["name"]).translate(FOLD).split()
             point = (float(row["latitude"]), float(row["longitude"]))
-            for end in range(1, len(tokens) + 1): # every leading part, so "frankfurt" finds "frankfurt am main"
+            for end in range(1, len(tokens) + 1): # "frankfurt" finds "frankfurt am main"
                 index.setdefault(" ".join(tokens[:end]), []).append(point)
     return index
 

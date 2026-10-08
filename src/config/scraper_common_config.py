@@ -19,7 +19,7 @@ scraper_common_config = {
         "sentence_embedding_model": "BAAI/bge-m3", # model is used to compare the 'query keyword' and 'job title' match and to filter false positives
         "threshold": 0.40, # to filter non-relevant (or less relevant) job listings
     },
-    # title must contain one of these words, [] turns it off; * matches more letters (praktik* -> praktikum, *buchhalt* -> finanzbuchhaltung)
+    # title needs one of these words, [] = off, * = wildcard
     "title_required_words": [
         "werkstudent*", "werkstudierende*", "working student", "working students",
         "praktik*", "pflichtpraktik*", "praxissemester",
@@ -28,7 +28,7 @@ scraper_common_config = {
         "studentisch*", "student", "students", "studentin", "studenten", "studierende*", "hiwi", "hilfskraft",
         "junior", "trainee*", "graduate*", "absolvent*", "einsteiger*", "berufseinsteiger*", "direkteinst*", "entry level", "entry-level", "young professional*",
     ],
-    # titles with one of these words are rejected, [] turns it off
+    # titles with these words are rejected, [] = off
     "title_excluded_words": [
         "sales", "vertrieb", "kundenservice", "customer support", "customer service", "business development", "key account",
         "phd", "doktorand*", "initiativbewerbung", "unsolicited", "schülerpraktikum", "orientierungspraktikum", "chief of staff",
@@ -47,7 +47,7 @@ scraper_common_config = {
         "max_consecutive_failures": 5, # failed queries in a row before a scraper gives up
     },
 
-    # sent to the sites; each one costs a page load per location, so keep it short
+    # sent to the sites, keep it short
     "search_keywords": [
         "Werkstudent KI",
         "Werkstudent Data Science",
@@ -64,7 +64,7 @@ scraper_common_config = {
         "Junior KI",
     ],
 
-    # titles are scored against these topics (never sent to a site)
+    # topics the titles are scored against
     "match_keywords": [
         # automation / digitalisation
         "Automatisierung",
