@@ -9,12 +9,6 @@
 
 **Searches five job boards for the German market in one run, keeps the postings that match your topics, reads each of them once, merges duplicates across boards and lets an LLM of your choice score every posting against your résumé.** The result is a local SQLite database of ranked, structured job postings; weekly runs only add and score what is new.
 
-> **Kurzfassung (Deutsch)**
->
-> Python-Pipeline, die fünf Jobbörsen für den deutschen Markt (Stepstone, Indeed, Xing, StudySmarter, LinkedIn) in einem Lauf durchsucht. Stellentitel werden mit einem mehrsprachigen Embedding-Modell (`BAAI/bge-m3`) nach Themen gefiltert, jede passende Anzeige wird einmal ausgelesen, Dubletten über Jobbörsen hinweg werden zusammengeführt, und ein frei wählbares LLM bewertet jede Anzeige anhand des Lebenslaufs – mit strukturierter, per Pydantic validierter JSON-Ausgabe. Ergebnis ist eine lokale SQLite-Datenbank, die bei jedem wöchentlichen Lauf nur um neue Anzeigen wächst.
->
-> **Schwerpunkte:** Web-Automatisierung mit Playwright · NLP mit Sentence-Embeddings · LLM-Integration mit Schema-Validierung und Fallback-Modellen · Datenqualität (Normalisierung, Deduplizierung, Geo-Filter) · fehlertolerante Pipelines · datenbasierte Kalibrierung von Schwellenwerten
-
 ## The problem it solves
 
 - The same searches on five boards every week, with every synonym ("Python Entwickler", "Python Developer", …) – configured once, run unattended.
