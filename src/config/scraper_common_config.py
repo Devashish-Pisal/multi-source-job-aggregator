@@ -6,10 +6,10 @@ scraper_common_config = {
     "use_stepstone_scraper": True,
     "use_xing_scraper": True,
     "use_study_smarter_scraper": True,
-    "use_linkedin_scraper": True,
+    "use_linkedin_scraper": False,
 
     # 1 = search pages, 2 = job pages + judge
-    "run_stage_1": False,
+    "run_stage_1": True,
     "run_stage_2": True,
 
     "log_level": "INFO", # DEBUG, INFO, WARNING, ...

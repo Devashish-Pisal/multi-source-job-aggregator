@@ -35,7 +35,7 @@ sss_config = {
         #"Sandhausen": 10,
         #"Viernheim": 10,
     },
-    "job_age": 30, # 1, 7, 30; weekly runs 7, catch-up 30
+    "job_age": 7, # 1, 7, 30; weekly runs 7, catch-up 30
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit

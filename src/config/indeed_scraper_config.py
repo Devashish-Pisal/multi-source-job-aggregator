@@ -37,7 +37,7 @@ indeed_scraper_config = {
         #"Handschuhsheim, Baden-Württemberg": 5,
         #"Viernheim, Hessen": 5,
     },
-    "job_age": 14, # 1, 3, 7, 14; weekly runs 7, catch-up 14
+    "job_age": 7, # 1, 3, 7, 14; weekly runs 7, catch-up 14
     # indeed blocks fast runs, so fewer and slower queries
     "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the common list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace

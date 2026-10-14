@@ -4,7 +4,7 @@ stage2_config = {
     "system_prompt_path": PROFILE_FOLDER_PATH / "system_prompt.md", # copy of system_prompt.example.md
     "resume_path": PROFILE_FOLDER_PATH / "resume.md", # copy of resume.example.md
     "max_detail_pages_per_platform": 150, # per run, best titles first
-    "max_description_attempts": 2, # then the job is marked failed
+    "max_description_attempts": 3, # then the job is marked failed
     "max_description_chars": 5000, # cut before judging
     "max_posting_age_days": 60, # older postings are marked expired and not judged
     "throttle": {

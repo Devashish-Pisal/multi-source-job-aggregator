@@ -35,7 +35,7 @@ xing_scraper_config = {
         #"Sandhausen": 10,
         #"Viernheim": 10,
     },
-    "job_age": "LAST_MONTH", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
+    "job_age": "LAST_WEEK", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
     "search_keywords": None, # None = the common list
     "between_queries": None, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit

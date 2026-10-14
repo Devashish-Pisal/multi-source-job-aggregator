@@ -28,7 +28,7 @@ linkedin_scraper_config = {
         #"Weinheim, Baden-Württemberg, Deutschland": 5,
         #"Walldorf, Baden-Württemberg, Deutschland": 5,
     },
-    "job_age": "r1209600", # r86400 = 1 day, r604800 = 7 (weekly), r1209600 = 14, r2592000 = 30
+    "job_age": "r604800", # r86400 = 1 day, r604800 = 7 (weekly), r1209600 = 14, r2592000 = 30
     # guests hit a sign-in wall quickly, so fewer and slower queries
     "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent Automatisierung", "Werkstudent Data Science", "Praktikum Data Analytics", "Intern AI"], # None = the common list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
