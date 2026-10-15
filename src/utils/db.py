@@ -11,28 +11,31 @@ from config.stage2_config import stage2_config
 from deduplication.normalize import normalize_title, normalize_company, normalize_location, normalize_description, build_dedup_key, tidy_text, description_containment
 from utils.util import normalize_job_url
 
-SCHEMA_VERSION = 3 # bump on schema changes
+SCHEMA_VERSION = 4 # bump on schema changes
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY,
-    url TEXT NOT NULL UNIQUE,
-    other_urls TEXT NOT NULL DEFAULT '[]',
-    platform TEXT NOT NULL,
-    title TEXT NOT NULL,
-    title_score REAL NOT NULL CHECK (typeof(title_score) = 'real'),
-    date_added TEXT NOT NULL,
     company TEXT,
+    title TEXT NOT NULL,
     location TEXT,
-    employment_type TEXT,
-    date_posted TEXT,
-    description TEXT,
-    description_source TEXT,
-    description_status TEXT NOT NULL DEFAULT 'pending' CHECK (description_status IN ('pending', 'ok', 'expired', 'failed')),
-    description_attempts INTEGER NOT NULL DEFAULT 0,
-    dedup_key TEXT,
-    judge_model TEXT,
+    url TEXT NOT NULL UNIQUE,
     fit_score INTEGER,
-    judge_json TEXT
+    reason TEXT,
+    description TEXT,
+    employment_type TEXT,
+    platform TEXT NOT NULL,
+    other_urls TEXT NOT NULL DEFAULT '[]',
+    judge_json TEXT,
+    date_added TEXT NOT NULL, -- stage 1
+    date_scraped TEXT, -- stage 2
+    date_judged TEXT, -- stage 3
+    date_posted TEXT,
+    description_status TEXT NOT NULL DEFAULT 'pending' CHECK (description_status IN ('pending', 'ok', 'expired', 'failed')),
+    judge_model TEXT,
+    title_score REAL NOT NULL CHECK (typeof(title_score) = 'real'),
+    description_source TEXT,
+    description_attempts INTEGER NOT NULL DEFAULT 0,
+    dedup_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_platform_status ON jobs (platform, description_status);
 CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs (dedup_key);
@@ -44,7 +47,7 @@ def _stale_cutoff() -> str:
     return (date.today() - timedelta(days=stage2_config["max_posting_age_days"])).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
+def _connect():
     db_path = path_config.DATABASE_FILE_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -53,14 +56,14 @@ def _connect() -> sqlite3.Connection:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if has_jobs_table and version != SCHEMA_VERSION:
         conn.close()
-        raise RuntimeError(f"{db_path} has schema version {version}, this code expects {SCHEMA_VERSION} -- move it aside (e.g. to app_backup_<date>.db) and a fresh database is created on the next run")
+        raise RuntimeError(f"{db_path} has schema version {version}, this code expects {SCHEMA_VERSION} -- rename the old file and a new database is created on the next run")
     conn.executescript(SCHEMA)
     if not has_jobs_table:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     return conn
 
 
-def init_db() -> None:
+def init_db():
     with closing(_connect()):
         logger.info(f"[db] Using {path_config.DATABASE_FILE_PATH}")
 
@@ -70,7 +73,9 @@ def upsert_stage1_jobs(jobs: list[dict]) -> tuple[int, int]:
     known_count = 0
     today = date.today().isoformat()
     with closing(_connect()) as conn:
-        folded_urls = {row[0] for row in conn.execute("SELECT value FROM jobs, json_each(jobs.other_urls)")}
+        folded_urls = set()
+        for row in conn.execute("SELECT value FROM jobs, json_each(jobs.other_urls)"):
+            folded_urls.add(row[0])
         for job in jobs:
             url = normalize_job_url(job["url"])
             if url in folded_urls: # duplicate seen before
@@ -102,22 +107,26 @@ def jobs_pending_description(platform: str, limit: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def _find_original(conn: sqlite3.Connection, job_id: int, dedup_key: str | None, company_key: str, description: str) -> tuple[int | None, str | None]:
+def _find_original(conn, job_id, dedup_key, company_key, description):
     if not dedup_key:
         return None, None
     exact = conn.execute("SELECT id FROM jobs WHERE dedup_key = ? AND id != ? AND description_status = 'ok' ORDER BY id LIMIT 1", (dedup_key, job_id)).fetchone()
     if exact:
         return exact["id"], "same key"
     first_word = dedup_key.split("|")[0].split()[0] # Döhler and Döhler Group share it
-    best_id, best_score = None, stage2_config["dedup"]["description_containment"]
+    best_id = None
+    best_score = stage2_config["dedup"]["description_containment"]
     candidates = conn.execute("SELECT id, dedup_key, description FROM jobs WHERE substr(dedup_key, 1, ?) = ? AND id != ? AND description_status = 'ok'", (len(first_word), first_word, job_id))
     for candidate in candidates:
         if candidate["dedup_key"].split("|")[0].split()[0] != first_word:
             continue
         score = description_containment(description, candidate["description"])
         if score >= best_score:
-            best_id, best_score = candidate["id"], score
-    return (best_id, f"same company, description overlap {best_score:.2f}") if best_id else (None, None)
+            best_id = candidate["id"]
+            best_score = score
+    if best_id is None:
+        return None, None
+    return best_id, f"same company, description overlap {best_score:.2f}"
 
 
 def save_description(job_id: int, fields: dict) -> dict:
@@ -127,6 +136,7 @@ def save_description(job_id: int, fields: dict) -> dict:
         "date_posted": fields.get("date_posted"),
         "description": normalize_description(fields["description"]),
         "description_source": fields["description_source"],
+        "date_scraped": date.today().isoformat(),
     }
     company_key = normalize_company(stored["company"])
     with closing(_connect()) as conn:
@@ -140,13 +150,16 @@ def save_description(job_id: int, fields: dict) -> dict:
             conn.execute(
                 """UPDATE jobs SET company = :company, location = :location, date_posted = :date_posted, description = :description,
                        description_source = :description_source, dedup_key = :dedup_key, description_status = 'expired',
-                       description_attempts = description_attempts + 1
+                       description_attempts = description_attempts + 1, date_scraped = :date_scraped
                    WHERE id = :id""",
                 {**stored, "id": job_id},
             )
         elif original_id:
             original_urls = json.loads(conn.execute("SELECT other_urls FROM jobs WHERE id = ?", (original_id,)).fetchone()[0])
-            merged_urls = list(dict.fromkeys(original_urls + [row["url"]] + json.loads(row["other_urls"])))
+            merged_urls = []
+            for folded_url in original_urls + [row["url"]] + json.loads(row["other_urls"]):
+                if folded_url not in merged_urls:
+                    merged_urls.append(folded_url)
             conn.execute("UPDATE jobs SET other_urls = ? WHERE id = ?", (json.dumps(merged_urls), original_id))
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
             stored.update(description_status="duplicate", original_id=original_id, note=f"duplicate of job #{original_id} ({match}); URL kept on it, row not stored")
@@ -155,7 +168,7 @@ def save_description(job_id: int, fields: dict) -> dict:
             conn.execute(
                 """UPDATE jobs SET company = :company, location = :location, date_posted = :date_posted,
                        description = :description, description_source = :description_source, dedup_key = :dedup_key,
-                       description_status = 'ok', description_attempts = description_attempts + 1
+                       description_status = 'ok', description_attempts = description_attempts + 1, date_scraped = :date_scraped
                    WHERE id = :id""",
                 {**stored, "id": job_id},
             )
@@ -163,9 +176,9 @@ def save_description(job_id: int, fields: dict) -> dict:
     return stored
 
 
-def mark_description_expired(job_id: int) -> None:
+def mark_description_expired(job_id: int):
     with closing(_connect()) as conn:
-        conn.execute("UPDATE jobs SET description_status = 'expired', description_attempts = description_attempts + 1 WHERE id = ?", (job_id,))
+        conn.execute("UPDATE jobs SET description_status = 'expired', description_attempts = description_attempts + 1, date_scraped = ? WHERE id = ?", (date.today().isoformat(), job_id))
         conn.commit()
 
 
@@ -183,29 +196,40 @@ def jobs_pending_judge() -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def save_verdict(job_id: int, model: str, fit_score: int, employment_type: str, judge_json: str) -> None:
+def save_verdict(job_id: int, model: str, fit_score: int, employment_type: str, reason: str, judge_json: str):
+    today = date.today().isoformat()
     with closing(_connect()) as conn:
-        conn.execute("UPDATE jobs SET judge_model = ?, fit_score = ?, employment_type = ?, judge_json = ? WHERE id = ?", (model, fit_score, employment_type, judge_json, job_id))
+        conn.execute(
+            "UPDATE jobs SET judge_model = ?, fit_score = ?, employment_type = ?, reason = ?, judge_json = ?, date_judged = ? WHERE id = ?",
+            (model, fit_score, employment_type, reason, judge_json, today, job_id),
+        )
         conn.commit()
 
 
 def db_summary(top_n: int) -> dict:
+    summary = {}
     with closing(_connect()) as conn:
+        summary["total"] = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        summary["folded_urls"] = conn.execute("SELECT COUNT(*) FROM jobs, json_each(jobs.other_urls)").fetchone()[0]
+        summary["per_platform"] = dict(conn.execute("SELECT platform, COUNT(*) FROM jobs GROUP BY platform ORDER BY platform").fetchall())
+        summary["per_status"] = dict(conn.execute("SELECT description_status, COUNT(*) FROM jobs GROUP BY description_status ORDER BY description_status").fetchall())
+        summary["judged"] = conn.execute("SELECT COUNT(*) FROM jobs WHERE judge_model IS NOT NULL").fetchone()[0]
+        summary["per_judge_model"] = dict(conn.execute("SELECT judge_model, COUNT(*) FROM jobs WHERE judge_model IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1").fetchall())
+        summary["awaiting_judge"] = conn.execute("SELECT COUNT(*) FROM jobs WHERE description_status = 'ok' AND judge_model IS NULL").fetchone()[0]
+
         buckets = dict(conn.execute(
             """SELECT CASE WHEN fit_score >= 85 THEN '85-100' WHEN fit_score >= 60 THEN '60-84' WHEN fit_score >= 30 THEN '30-59' ELSE '0-29' END, COUNT(*)
                FROM jobs WHERE judge_model IS NOT NULL GROUP BY 1"""
         ).fetchall())
-        return {
-            "total": conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0],
-            "folded_urls": conn.execute("SELECT COUNT(*) FROM jobs, json_each(jobs.other_urls)").fetchone()[0],
-            "per_platform": dict(conn.execute("SELECT platform, COUNT(*) FROM jobs GROUP BY platform ORDER BY platform").fetchall()),
-            "per_status": dict(conn.execute("SELECT description_status, COUNT(*) FROM jobs GROUP BY description_status ORDER BY description_status").fetchall()),
-            "judged": conn.execute("SELECT COUNT(*) FROM jobs WHERE judge_model IS NOT NULL").fetchone()[0],
-            "per_judge_model": dict(conn.execute("SELECT judge_model, COUNT(*) FROM jobs WHERE judge_model IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1").fetchall()),
-            "awaiting_judge": conn.execute("SELECT COUNT(*) FROM jobs WHERE description_status = 'ok' AND judge_model IS NULL").fetchone()[0],
-            "fit_buckets": {bucket: buckets.get(bucket, 0) for bucket in FIT_BUCKETS},
-            "top_jobs": [dict(row) for row in conn.execute(
-                "SELECT id, fit_score, title, company, location, platform, date_added, url FROM jobs WHERE judge_model IS NOT NULL ORDER BY fit_score DESC, title_score DESC LIMIT ?",
-                (top_n,),
-            )],
-        }
+        summary["fit_buckets"] = {}
+        for bucket in FIT_BUCKETS:
+            summary["fit_buckets"][bucket] = buckets.get(bucket, 0)
+
+        top_jobs = conn.execute(
+            "SELECT id, fit_score, title, company, location, platform, date_added, url FROM jobs WHERE judge_model IS NOT NULL ORDER BY fit_score DESC, title_score DESC LIMIT ?",
+            (top_n,),
+        )
+        summary["top_jobs"] = []
+        for row in top_jobs:
+            summary["top_jobs"].append(dict(row))
+    return summary

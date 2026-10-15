@@ -1,50 +1,55 @@
 import re
 import unicodedata
 
-from utils.util import GENDER_NOISE_WORDS, GENDER_SUFFIX_PATTERN
+from utils.util import GENDER_NOISE_WORDS, GENDER_SUFFIX_PATTERN, INVISIBLE_CHARS_PATTERN, words_regex
 
-INVISIBLE_CHARS_PATTERN = re.compile(r"[­​‌‍⁠﻿]")
-GENDER_TAG_PATTERN = re.compile(
-    r"\(\s*(?:[mwfdx]\s*[/|,*.-]?\s*){2,4}\)"  # (m/w/d), (w|m|d), (mwd), (f/m/x)
-    r"|\b(?:" + "|".join(re.escape(w) for w in sorted(GENDER_NOISE_WORDS, key=len, reverse=True)) + r")\b"
-)
+# (m/w/d), (w|m|d), (mwd), (f/m/x) and the gender words
+GENDER_TAG_PATTERN = re.compile(r"\(\s*(?:[mwfdx]\s*[/|,*.-]?\s*){2,4}\)" + "|" + words_regex(GENDER_NOISE_WORDS))
 LEGAL_FORMS_PATTERN = re.compile(
     r"\b(?:gmbh|mbh|ag|se|kgaa|kg|ohg|gbr|ug|haftungsbeschränkt|e v|ev|ltd|limited|inc|llc|plc|corp|co|deutschland|germany|group|gruppe|holding)\b"
 )
-NO_CITY = {"bundesweit", "deutschlandweit", "deutschland", "germany", "remote", "home office", "homeoffice", "home-office", "mobile office", "mobiles arbeiten"}
+NO_CITY = ["bundesweit", "deutschlandweit", "deutschland", "germany", "remote", "home office", "homeoffice", "home-office", "mobile office", "mobiles arbeiten"]
 FOLD = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 
 def clean_invisible(text: str) -> str:
-    return INVISIBLE_CHARS_PATTERN.sub("", unicodedata.normalize("NFKC", text))
+    text = unicodedata.normalize("NFKC", text)
+    return INVISIBLE_CHARS_PATTERN.sub("", text)
 
 
 def _collapse(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def tidy_text(text: str | None) -> str:
-    return _collapse(clean_invisible(text)) if text else ""
+def tidy_text(text) -> str:
+    if not text:
+        return ""
+    return _collapse(clean_invisible(text))
 
 
-def normalize_title(title: str | None) -> str:
+def normalize_title(title) -> str:
     if not title:
         return ""
-    text = GENDER_SUFFIX_PATTERN.sub("", clean_invisible(title).lower())
+    text = clean_invisible(title).lower()
+    text = GENDER_SUFFIX_PATTERN.sub("", text)
     text = GENDER_TAG_PATTERN.sub(" ", text)
     text = re.sub(r"[^\w\s+#.]|_", " ", text)
     text = re.sub(r"(?<!\w)\.|\.(?!\w)", " ", text)  # keep dots inside words only (node.js)
     return _collapse(text)
 
 
-def normalize_company(company: str | None) -> str:
+def normalize_company(company) -> str:
     if not company:
         return ""
-    text = re.sub(r"[^\w\s]|_", " ", clean_invisible(company).lower())
-    return _collapse(LEGAL_FORMS_PATTERN.sub(" ", _collapse(text)))
+    text = clean_invisible(company).lower()
+    text = re.sub(r"[^\w\s]|_", " ", text)
+    text = _collapse(text)
+    text = LEGAL_FORMS_PATTERN.sub(" ", text)
+    return _collapse(text)
 
 
-def normalize_location(location: str | None) -> str:
+def normalize_location(location) -> str:
     if not location:
         return ""
     parts = []
@@ -52,34 +57,47 @@ def normalize_location(location: str | None) -> str:
         part = re.sub(r"\d+", " ", part)
         part = re.sub(r"[^\w\s-]|_|(?<!\w)-|-(?!\w)", " ", part)
         part = _collapse(part)
-        if part:
+        if part and part not in parts:
             parts.append(part)
-    return " | ".join(dict.fromkeys(parts))
+    return " | ".join(parts)
 
 
-def first_city(location: str | None) -> str:
-    city = (location or "").split(" | ")[0]
-    return "" if city in NO_CITY else city
+def first_city(location) -> str:
+    if not location:
+        return ""
+    city = location.split(" | ")[0]
+    if city in NO_CITY:
+        return ""
+    return city
 
 
 def normalize_description(description: str) -> str:
     text = clean_invisible(description).replace("\r", "")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
-def build_dedup_key(company: str | None, title: str | None, location: str | None) -> str | None:
+def build_dedup_key(company, title, location):
     if not company or not title:
         return None
-    return f"{company}|{title}|{first_city(location)}".translate(FOLD) # nußloch = nussloch
+    key = f"{company}|{title}|{first_city(location)}"
+    return key.translate(FOLD) # nußloch = nussloch
 
 
-def _shingles(text: str, size: int = 5) -> set[str]:
+def _shingles(text: str, size: int = 5) -> set:
     words = re.findall(r"\w+", text.lower())
-    return {" ".join(words[i:i + size]) for i in range(max(len(words) - size + 1, 1))}
+    shingles = set()
+    count = max(len(words) - size + 1, 1)
+    for i in range(count):
+        shingles.add(" ".join(words[i:i + size]))
+    return shingles
 
 
 def description_containment(first: str, second: str) -> float:
-    first_shingles, second_shingles = _shingles(first), _shingles(second)
-    return len(first_shingles & second_shingles) / min(len(first_shingles), len(second_shingles)) # a short teaser inside the full ad counts
+    first_shingles = _shingles(first)
+    second_shingles = _shingles(second)
+    shared = first_shingles & second_shingles
+    # divided by the smaller text, so a short teaser inside the full ad counts
+    return len(shared) / min(len(first_shingles), len(second_shingles))

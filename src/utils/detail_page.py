@@ -10,6 +10,13 @@ AGE_TEXT_PATTERN = re.compile(r"(\d+)\s*(minute|min|stunde|std|hour|tag|day|woch
 AGE_UNIT_DAYS = {"minute": 0, "min": 0, "stunde": 0, "std": 0, "hour": 0, "tag": 1, "day": 1, "woche": 7, "week": 7, "monat": 30, "month": 30, "jahr": 365, "year": 365}
 
 
+def expired_pattern(signatures: list[str]):
+    escaped = []
+    for signature in signatures:
+        escaped.append(re.escape(signature.lower()))
+    return re.compile("|".join(escaped))
+
+
 def html_to_text(html: str) -> str:
     text = re.sub(r"</li\s*>", "", html, flags=re.I)
     text = re.sub(r"<li\b[^>]*>", "\n- ", text, flags=re.I)
@@ -20,17 +27,33 @@ def html_to_text(html: str) -> str:
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"(?m)^-\n+(?=\S)", "- ", text) # <li><p> left the dash on its own line
     text = re.sub(r"(?m)^(- .+)\n\n(?=- )", r"\1\n", text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def drop_junk_lines(text: str, detail: dict) -> str:
-    junk = {line.lower() for line in detail.get("junk_lines", [])}
-    lines = [line for line in text.split("\n") if line.strip().lstrip("-• ").lower() not in junk and line.strip() not in ("-", "•")]
+    junk = []
+    for line in detail.get("junk_lines", []):
+        junk.append(line.lower())
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.lstrip("-• ").lower() in junk:
+            continue
+        if stripped == "-" or stripped == "•":
+            continue
+        lines.append(line)
+    # cut a short footer such as xing's "Anstellungsart ... Standort" block
     for marker in detail.get("footer_markers", []):
-        starts = [index for index, line in enumerate(lines) if line.strip() == marker]
-        if starts and len("\n".join(lines[starts[-1]:])) < 300:
-            lines = lines[:starts[-1]]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+        last_marker = None
+        for index, line in enumerate(lines):
+            if line.strip() == marker:
+                last_marker = index
+        if last_marker is not None and len("\n".join(lines[last_marker:])) < 300:
+            lines = lines[:last_marker]
+    text = "\n".join(lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _find_job_posting(data):
@@ -51,14 +74,17 @@ def _find_job_posting(data):
     return None
 
 
-def _organization_name(organization) -> str | None:
+def _organization_name(organization):
     if isinstance(organization, dict):
         return organization.get("name") or None
     return organization or None
 
 
-def _location_text(job_location) -> str | None:
-    places = job_location if isinstance(job_location, list) else [job_location]
+def _location_text(job_location):
+    if isinstance(job_location, list):
+        places = job_location
+    else:
+        places = [job_location]
     parts = []
     for place in places:
         if not isinstance(place, dict):
@@ -69,26 +95,40 @@ def _location_text(job_location) -> str | None:
         if isinstance(address, dict):
             locality = address.get("addressLocality") or address.get("addressRegion")
             postal_code = address.get("postalCode")
-            text = " ".join(str(v) for v in (postal_code, locality) if v) or address.get("streetAddress")
+            words = []
+            if postal_code:
+                words.append(str(postal_code))
+            if locality:
+                words.append(str(locality))
+            text = " ".join(words) or address.get("streetAddress")
         else:
             text = address or place.get("name")
         if text:
             parts.append(str(text))
-    return " | ".join(dict.fromkeys(parts)) or None
+    unique_parts = []
+    for part in parts:
+        if part not in unique_parts:
+            unique_parts.append(part)
+    return " | ".join(unique_parts) or None
 
 
-def _employment_type_text(employment_type) -> str | None:
+def _employment_type_text(employment_type):
     if isinstance(employment_type, list):
-        return ", ".join(str(e) for e in employment_type) or None
+        types = []
+        for item in employment_type:
+            types.append(str(item))
+        return ", ".join(types) or None
     return employment_type or None
 
 
-def _date_only(value) -> str | None:
+def _date_only(value):
     match = re.match(r"\d{4}-\d{2}-\d{2}", str(value or "").strip())
-    return match.group(0) if match else None
+    if match:
+        return match.group(0)
+    return None
 
 
-def date_from_age_text(text: str | None) -> str | None:
+def date_from_age_text(text):
     match = AGE_TEXT_PATTERN.search(text or "") # "Vor 2 Wochen", "3 days ago"
     if not match:
         return None
@@ -96,7 +136,7 @@ def date_from_age_text(text: str | None) -> str | None:
     return (date.today() - timedelta(days=days)).isoformat()
 
 
-def parse_job_posting_json_ld(html: str) -> dict | None:
+def parse_job_posting_json_ld(html: str):
     for block in JSON_LD_SCRIPT_PATTERN.findall(html):
         try:
             data = json.loads(block.strip())
@@ -116,7 +156,7 @@ def parse_job_posting_json_ld(html: str) -> dict | None:
     return None
 
 
-def first_inner_text(page, selectors: list[str], min_chars: int = 1) -> str | None:
+def first_inner_text(page, selectors: list[str], min_chars: int = 1):
     for selector in selectors:
         try:
             locator = page.locator(selector)
@@ -130,15 +170,17 @@ def first_inner_text(page, selectors: list[str], min_chars: int = 1) -> str | No
     return None
 
 
-def detect_expired_page(page, response, text_pattern: re.Pattern) -> str | None:
+def detect_expired_page(page, response, text_pattern):
     try:
         if response is not None and response.status in (404, 410):
             return f"HTTP {response.status}"
         title = page.title()
-        if match := text_pattern.search(title.lower()):
+        match = text_pattern.search(title.lower())
+        if match:
             return f"page title '{title}' matches '{match.group(0)}'"
         text = page.evaluate("() => document.body ? document.body.innerText.slice(0, 5000) : ''")
-        if match := text_pattern.search(text.lower()):
+        match = text_pattern.search(text.lower())
+        if match:
             return f"page text contains '{match.group(0)}'"
     except Exception:
         return None

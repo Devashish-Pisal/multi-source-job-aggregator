@@ -291,24 +291,32 @@ A CSV with no rows is not written.
 <details>
 <summary><b>The <code>jobs</code> table and the verdict JSON</b></summary>
 
+The columns an applicant reads come first, the dates and the pipeline's own bookkeeping after them.
+
 | Column | Content |
 |--------|---------|
 | `id` | primary key |
-| `url` | posting URL (tracking parameters removed); unique |
-| `other_urls` | JSON list of the URLs of duplicates folded into this job (other boards, re-posts) |
-| `platform` | `stepstone`, `indeed`, `xing`, `study_smarter`, `linkedin` |
 | `company` | exactly as the posting writes it, e.g. `io-consultants GmbH & Co. KG` |
 | `title` | exactly as the posting writes it, e.g. `Werkstudent Data Analytics / Simulation (m/w/d)` |
 | `location` | normalised: lowercase, postcodes dropped |
-| `title_score` | stage-1 similarity to the closest `match_keywords` entry |
-| `date_added` | date the job entered the database (`YYYY-MM-DD`) |
+| `url` | posting URL (tracking parameters removed); unique |
+| `fit_score` | the judge's score 0–100 |
+| `reason` | the judge's one-sentence reason for the score |
+| `description` | posting text |
 | `employment_type` | the judge's classification (full_time, working_student, internship, …); empty until judged – the boards' own metadata is too unreliable |
-| `date_posted` | the posting's own date (`YYYY-MM-DD`) |
-| `description`, `description_source` | posting text and where it came from (`json_ld` / `css`) |
+| `platform` | `stepstone`, `indeed`, `xing`, `study_smarter`, `linkedin` |
+| `other_urls` | JSON list of the URLs of duplicates folded into this job (other boards, re-posts) |
+| `judge_json` | the full verdict, see below |
+| `date_added` | stage 1: date the job was found in a search (`YYYY-MM-DD`) |
+| `date_scraped` | stage 2: date its posting page was last read |
+| `date_judged` | stage 3: date of its current verdict |
+| `date_posted` | the posting's own date |
 | `description_status` | `pending` → `ok`, or `expired` (removed, or older than `max_posting_age_days`), `failed` |
+| `judge_model` | the model that judged it; `location filter` for postings outside the search area |
+| `title_score` | stage-1 similarity to the closest `match_keywords` entry |
+| `description_source` | where the description came from (`json_ld` / `css`) |
 | `description_attempts` | page loads so far |
 | `dedup_key` | `normalised company\|title\|first city` |
-| `judge_model`, `fit_score`, `judge_json` | the verdict; `judge_model` is `location filter` for postings outside the search area |
 
 `judge_json` holds:
 
@@ -327,18 +335,25 @@ A CSV with no rows is not written.
 }
 ```
 
-Example query:
+Example queries:
 
 ```sql
+-- good matches judged since a given day, best first
+SELECT id, company, title, location, url, fit_score, reason
+FROM jobs
+WHERE date_judged >= '2026-10-14' AND description_status = 'ok' AND judge_model IS NOT NULL AND fit_score >= 70
+ORDER BY fit_score DESC;
+
+-- requirements of the good matches that fit the candidate's level
 SELECT id, title, company, url, fit_score,
        json_extract(judge_json, '$.details.requirements.must_have') AS must_have,
        json_extract(judge_json, '$.details.requirements.keywords') AS keywords
 FROM jobs
 WHERE description_status = 'ok' AND judge_model IS NOT NULL AND fit_score >= 70 AND json_extract(judge_json, '$.level_ok') = 1
-ORDER BY date_added DESC, fit_score DESC;
+ORDER BY date_judged DESC, fit_score DESC;
 ```
 
-To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 3; its old `fit_score` and `judge_json` stay until the new verdict replaces them, so filter on `judge_model IS NOT NULL` as above. If two different jobs were merged, raise `dedup.description_containment` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
+To have a job judged again (e.g. after changing the prompt), set its `judge_model` to `NULL` and run stage 3; its old `fit_score`, `reason`, `judge_json` and `date_judged` stay until the new verdict replaces them, so filter on `judge_model IS NOT NULL` as above. If two different jobs were merged, raise `dedup.description_containment` and remove the wrongly folded URL from the kept job's `other_urls`; the next run picks it up again.
 
 </details>
 

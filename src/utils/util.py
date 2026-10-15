@@ -61,14 +61,30 @@ BOARD_NOISE_WORDS = [
 NOISE_WORDS = EMPLOYMENT_NOISE_WORDS + GENDER_NOISE_WORDS + CONTRACT_NOISE_WORDS + BOARD_NOISE_WORDS
 
 
-NOISE_WORDS_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(w) for w in sorted(NOISE_WORDS, key=len, reverse=True)) + r")\b"
-)
+def words_regex(words: list[str]) -> str:
+    # longest first, so "working student" is removed before "student"
+    escaped_words = []
+    for word in sorted(words, key=len, reverse=True):
+        escaped_words.append(re.escape(word))
+    return r"\b(?:" + "|".join(escaped_words) + r")\b"
+
+
+NOISE_WORDS_PATTERN = re.compile(words_regex(NOISE_WORDS))
 GENDER_SUFFIX_PATTERN = re.compile(r"(?<=[a-zäöüß])[/*:_·]-?in(?:nen)?\b")  # praktikant/in, werkstudent:in, entwickler*innen
-def title_words_pattern(words: list[str]) -> re.Pattern | None:
+INVISIBLE_CHARS_PATTERN = re.compile("[­​‌‍⁠﻿]") # soft hyphen, zero width spaces
+
+
+def title_words_pattern(words: list[str]):
     if not words:
         return None
-    parts = [(r"\w*" if w.startswith("*") else "") + re.escape(w.lower().strip("*")) + (r"\w*" if w.endswith("*") else "") for w in sorted(words, key=len, reverse=True)]
+    parts = []
+    for word in sorted(words, key=len, reverse=True):
+        part = re.escape(word.lower().strip("*"))
+        if word.startswith("*"):
+            part = r"\w*" + part
+        if word.endswith("*"):
+            part = part + r"\w*"
+        parts.append(part)
     return re.compile(r"\b(?:" + "|".join(parts) + r")\b") # "praktik*" also matches praktikum, "*buchhalt*" finanzbuchhaltung
 
 
@@ -77,14 +93,18 @@ TITLE_EXCLUDED_WORDS_PATTERN = title_words_pattern(stage1_config["title_excluded
 
 
 def has_required_title_word(title: str) -> bool:
-    return TITLE_REQUIRED_WORDS_PATTERN is None or bool(TITLE_REQUIRED_WORDS_PATTERN.search(title.lower()))
+    if TITLE_REQUIRED_WORDS_PATTERN is None:
+        return True
+    return TITLE_REQUIRED_WORDS_PATTERN.search(title.lower()) is not None
 
 
 def has_excluded_title_word(title: str) -> bool:
-    return TITLE_EXCLUDED_WORDS_PATTERN is not None and bool(TITLE_EXCLUDED_WORDS_PATTERN.search(title.lower()))
+    if TITLE_EXCLUDED_WORDS_PATTERN is None:
+        return False
+    return TITLE_EXCLUDED_WORDS_PATTERN.search(title.lower()) is not None
 
 
-def title_rejection_reason(title: str, score: float, threshold: float) -> str | None:
+def title_rejection_reason(title: str, score: float, threshold: float):
     if score < threshold:
         return "below threshold"
     if not has_required_title_word(title):
@@ -98,7 +118,8 @@ def clean_search_keywords_and_job_title(text: str) -> str:
     text = GENDER_SUFFIX_PATTERN.sub("", text.lower())
     text = NOISE_WORDS_PATTERN.sub(" ", text)
     text = re.sub(r"[\(\)\[\]\|\-_/,:;]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 BLOCK_PAGE_TITLE_PATTERN = re.compile(
@@ -124,19 +145,22 @@ BLOCK_PAGE_SELECTORS = [
 ]
 
 
-def detect_block_page(page) -> str | None:
+def detect_block_page(page):
     try:
         title = page.title()
         url = page.url
-        if match := BLOCK_PAGE_TITLE_PATTERN.search(title.lower()):
+        match = BLOCK_PAGE_TITLE_PATTERN.search(title.lower())
+        if match:
             return f"page title '{title}' matches '{match.group(0)}'"
-        if match := BLOCK_PAGE_URL_PATTERN.search(url.lower()):
+        match = BLOCK_PAGE_URL_PATTERN.search(url.lower())
+        if match:
             return f"page URL {url} matches '{match.group(0)}'"
         for selector in BLOCK_PAGE_SELECTORS:
             if page.locator(selector).count():
                 return f"challenge element '{selector}' is on the page (title '{title}')"
         text = page.evaluate("() => document.body ? document.body.innerText.slice(0, 20000) : ''")
-        if match := BLOCK_PAGE_TEXT_PATTERN.search(text.lower()):
+        match = BLOCK_PAGE_TEXT_PATTERN.search(text.lower())
+        if match:
             return f"page text contains '{match.group(0)}' (title '{title}')"
     except Exception:
         return None
@@ -144,7 +168,15 @@ def detect_block_page(page) -> str | None:
 
 
 def is_connection_error(exc: Exception) -> bool:
-    return bool(CONNECTION_ERROR_PATTERN.search(str(exc)))
+    return CONNECTION_ERROR_PATTERN.search(str(exc)) is not None
+
+
+def short_error(exc: Exception) -> str:
+    # playwright errors are long, the first line is enough for the log
+    text = str(exc).strip()
+    if not text:
+        return type(exc).__name__
+    return text.splitlines()[0]
 
 
 def compute_search_keywords_embeddings(model, keywords:list[str]):
@@ -177,11 +209,19 @@ def find_best_matching_keyword(keywords_embeddings, job_title_emb) -> tuple[int,
     return best_index, float(max_sim) # sqlite would store np.float32 as a blob
 
 
+TRACKING_PARAMETERS = ["fbclid", "gclid", "ijt"] # ijt = xing tracking
+
+
 def normalize_job_url(url: str) -> str:
-    parsed = urlparse(re.sub(r"[­​‌‍⁠﻿]", "", url.strip()))
-    filtered_query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not k.startswith("utm_") and k not in ("fbclid", "gclid", "ijt")] # ijt = xing tracking
-    normalized = parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), query=urlencode(filtered_query), fragment="")
-    return urlunparse(normalized)
+    url = INVISIBLE_CHARS_PATTERN.sub("", url.strip())
+    parsed = urlparse(url)
+    query = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.startswith("utm_") or key in TRACKING_PARAMETERS:
+            continue
+        query.append((key, value))
+    # lowercase only scheme and host, stepstone paths are case sensitive
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, parsed.params, urlencode(query), ""))
 
 
 def load_embedding_model_and_keyword_embeddings():

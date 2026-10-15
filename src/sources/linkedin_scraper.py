@@ -1,7 +1,5 @@
 import random
-import re
 import sys
-from collections import Counter
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -19,12 +17,13 @@ from utils.util import (
     load_embedding_model_and_keyword_embeddings,
     detect_block_page,
     title_rejection_reason,
+    short_error,
 )
 from utils.throttle import delay_after_page_load, delay_between_interactions, delay_between_queries, delay_between_detail_pages, random_scroll
 from utils.db import jobs_pending_description, save_description, mark_description_expired, record_description_failure, upsert_stage1_jobs
-from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines, date_from_age_text
+from utils.detail_page import parse_job_posting_json_ld, first_inner_text, detect_expired_page, drop_junk_lines, date_from_age_text, expired_pattern
 
-LINKEDIN_EXPIRED_PATTERN = re.compile("|".join(re.escape(s.lower()) for s in linkedin_scraper_config["detail_page"]["expired_signatures"]))
+LINKEDIN_EXPIRED_PATTERN = expired_pattern(linkedin_scraper_config["detail_page"]["expired_signatures"])
 
 
 class LinkedInScraper:
@@ -54,7 +53,10 @@ class LinkedInScraper:
             logger.info(f"[LinkedIn Scraper] {len(pending_jobs)} job detail pages pending (at most {limit} per run)")
             if pending_jobs:
                 self.description_scraped_jobs = self.extract_job_descriptions(pending_jobs)
-            status_counts = dict(Counter(job["description_status"] for job in self.description_scraped_jobs))
+            status_counts = {}
+            for job in self.description_scraped_jobs:
+                status = job["description_status"]
+                status_counts[status] = status_counts.get(status, 0) + 1
             logger.info(f"[LinkedIn Scraper] Detail pages visited: {status_counts}")
         else:
             logger.info(f"[LinkedIn Scraper] LinkedIn scraper is disabled in common config!")
@@ -113,6 +115,7 @@ class LinkedInScraper:
                 page.on("requestfailed", lambda req: logger.debug(f"[LinkedIn Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
                 max_failures = common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
+                stopped = False
                 for index, (url, keyword, location) in enumerate(query_url_list):
                     query_accepted = []
                     try:
@@ -134,7 +137,8 @@ class LinkedInScraper:
                             logger.info(f"[LinkedIn Scraper] No matching job posting results found for query {url}")
                         for i in range(card_count):
                             card = cards.nth(i)
-                            job_id = (card.get_attribute("data-entity-urn") or "").rsplit(":", 1)[-1] # urn:li:jobPosting:4451900670
+                            urn = card.get_attribute("data-entity-urn") or "" # urn:li:jobPosting:4451900670
+                            job_id = urn.split(":")[-1]
                             if not job_id.isdigit():
                                 logger.debug(f"[LinkedIn Scraper] Skipping card without a job id ({job_id[:30]})")
                                 continue
@@ -155,7 +159,7 @@ class LinkedInScraper:
                                     rejected_jobs.append(get_emb_match_job_dict(title, full_url, max_sim, best_matching_keyword, "linkedin"))
                                     logger.debug(f"[LinkedIn Scraper] Rejecting '{title}' ({title_rejection_reason(title, max_sim, threshold)}) | score={max_sim} | closest keyword='{best_matching_keyword}' | URL={full_url}")
                             elif full_url not in accepted_job_urls and full_url not in rejected_job_urls:
-                                logger.warning(f"[LinkedIn Scraper] Could not extract a title for {full_url} -- saved to the rejected CSV without a score.")
+                                logger.warning(f"[LinkedIn Scraper] No title found for {full_url}, saved to the rejected CSV")
                                 rejected_job_urls.add(full_url)
                                 rejected_jobs.append(get_emb_match_job_dict(None, full_url, None, None, "linkedin"))
                         self.query_yield.append({"keyword": keyword, "location": location, "accepted_urls": query_accepted, "results": card_count})
@@ -163,16 +167,20 @@ class LinkedInScraper:
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1
-                        error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+                        error = short_error(exc)
                         block_reason = detect_block_page(page)
                         logger.warning(f"[LinkedIn Scraper] Query failed ({consecutive_failures}/{max_failures} consecutive): {error} | URL: {url}")
                         if block_reason or consecutive_failures >= max_failures:
                             remaining = len(query_url_list) - index - 1
-                            why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} queries failed in a row with no block page detected, last error: {error}"
-                            logger.error(f"[LinkedIn Scraper] Circuit breaker tripped -- {why}. Aborting this scraper with {remaining} of {len(query_url_list)} queries unvisited so a blocking site is not hammered further; {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs collected so far are kept. Current page URL: {page.url}")
+                            if block_reason:
+                                why = f"block page ({block_reason})"
+                            else:
+                                why = f"{consecutive_failures} queries failed in a row, last error: {error}"
+                            logger.error(f"[LinkedIn Scraper] Circuit breaker, stopping: {why} | {remaining} of {len(query_url_list)} queries not visited, {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs kept | page: {page.url}")
+                            stopped = True
                             break
                     delay_between_queries(common_config, linkedin_scraper_config["between_queries"])
-                else:
+                if not stopped:
                     logger.info(f"[LinkedIn Scraper] Browser session completed successfully, all {len(query_url_list)} queries visited.")
             finally:
                 self.query_matched_emb_accepted_jobs = accepted_jobs
@@ -208,6 +216,7 @@ class LinkedInScraper:
                 page.on("requestfailed", lambda req: logger.debug(f"[LinkedIn Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
                 max_failures = common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
+                stopped = False
                 for index, job in enumerate(jobs):
                     url = job["url"]
                     scraped_jobs.append(job)
@@ -243,7 +252,7 @@ class LinkedInScraper:
                             if not fields.get("date_posted"):
                                 fields["date_posted"] = date_from_age_text(first_inner_text(page, detail["date_posted"]))
                             if not fields["description"]:
-                                raise ValueError("no description found (no JSON-LD JobPosting and the CSS fallback matched nothing)")
+                                raise ValueError("no description found")
                             fields["description"] = drop_junk_lines(fields["description"], detail)
                             job.update(save_description(job["id"], fields))
                             note = f" -- {job['note']}" if job.get("note") else ""
@@ -251,18 +260,25 @@ class LinkedInScraper:
                         consecutive_failures = 0
                     except Exception as exc:
                         consecutive_failures += 1
-                        error = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+                        error = short_error(exc)
                         job["description_status"] = record_description_failure(job["id"], max_attempts)
                         block_reason = detect_block_page(page)
                         logger.warning(f"[LinkedIn Scraper] Detail page failed ({consecutive_failures}/{max_failures} consecutive, now '{job['description_status']}'): {error} | URL: {url}")
                         if block_reason or consecutive_failures >= max_failures:
                             remaining = len(jobs) - index - 1
-                            why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} detail pages failed in a row with no block page detected, last error: {error}"
-                            saved = sum(1 for j in scraped_jobs if j["description_status"] == "ok")
-                            logger.error(f"[LinkedIn Scraper] Circuit breaker tripped -- {why}. Aborting description scraping with {remaining} of {len(jobs)} detail pages unvisited (they stay pending for the next run) so a blocking site is not hammered further; {saved} descriptions saved so far are kept. Current page URL: {page.url}")
+                            if block_reason:
+                                why = f"block page ({block_reason})"
+                            else:
+                                why = f"{consecutive_failures} detail pages failed in a row, last error: {error}"
+                            saved = 0
+                            for scraped_job in scraped_jobs:
+                                if scraped_job["description_status"] == "ok":
+                                    saved += 1
+                            logger.error(f"[LinkedIn Scraper] Circuit breaker, stopping: {why} | {remaining} of {len(jobs)} detail pages not visited (they stay pending), {saved} descriptions saved | page: {page.url}")
+                            stopped = True
                             break
                     delay_between_detail_pages(stage2_config, linkedin_scraper_config["between_detail_pages"])
-                else:
+                if not stopped:
                     logger.info(f"[LinkedIn Scraper] Browser session completed successfully, all {len(jobs)} detail pages visited.")
             finally:
                 self.description_scraped_jobs = scraped_jobs
@@ -276,7 +292,8 @@ class LinkedInScraper:
             title = card.locator(linkedin_scraper_config["search_page"]["title"])
             if title.count(): # count() first, a miss would wait 15 s
                 return title.first.inner_text().strip() or None
-            return card.inner_text().strip().split("\n")[0].strip() or None
+            first_line = card.inner_text().strip().split("\n")[0]
+            return first_line.strip() or None
         except Exception:
             return None
 
