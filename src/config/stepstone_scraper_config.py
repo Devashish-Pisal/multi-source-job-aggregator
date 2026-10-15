@@ -37,20 +37,20 @@ stepstone_scraper_config = {
         #"Viernheim": 5,
     },
     "job_age": 7, # 1 or 7 (max)
-    "search_keywords": None, # None = the common list
+    "search_keywords": None, # None = the stage-1 list
     "between_queries": None, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[id='ccmgt_explicit_accept']", # unverified
-    "search_page": {
+    "search_page": { # stage 1
         "results_container": "div[class*='res-'][data-genesis-element='BASE']",
         "hit_counter": "[data-resultlist-offers-numbers]",
         "hit_counter_attribute": "data-resultlist-offers-main-displayed", # real hits, no recommendations
         "links": "a[href*='/stellenangebote']",
     },
-    "detail_page": {
+    "detail_page": { # stage 2
         "wait_for": "[data-at='job-ad-content']",
         "description": ["[data-at='job-ad-content']"],
         "company": ["[data-at='header-company-name']"],

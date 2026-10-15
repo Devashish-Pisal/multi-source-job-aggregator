@@ -36,19 +36,19 @@ xing_scraper_config = {
         #"Viernheim": 10,
     },
     "job_age": "LAST_WEEK", # LAST_24_HOURS, LAST_WEEK, LAST_MONTH; weekly runs LAST_WEEK
-    "search_keywords": None, # None = the common list
+    "search_keywords": None, # None = the stage-1 list
     "between_queries": None, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[data-action-type='accept'][id='accept']", # accept button
-    "search_page": {
+    "search_page": { # stage 1
         "results_container": "div[class*='container__Container']",
         "cards": "div[class*='container__Container'] > div > ol[class*='results-styles'] > li > article[data-xds='Card']",
         "card_link": "a", # title is in its aria-label
     },
-    "detail_page": {
+    "detail_page": { # stage 2
         "wait_for": "[data-testid='expandable-content']", # 'main' appears before the JSON-LD does
         "description": ["[data-testid='expandable-content']"], # 'main' would hold the similar-jobs list
         "company": ["[data-testid='job-details-company-info-name']"],

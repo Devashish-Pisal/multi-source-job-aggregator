@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from config.scraper_common_config import scraper_common_config
+from config.stage1_config import stage1_config
 
 
 EMPLOYMENT_NOISE_WORDS = [
@@ -72,8 +72,8 @@ def title_words_pattern(words: list[str]) -> re.Pattern | None:
     return re.compile(r"\b(?:" + "|".join(parts) + r")\b") # "praktik*" also matches praktikum, "*buchhalt*" finanzbuchhaltung
 
 
-TITLE_REQUIRED_WORDS_PATTERN = title_words_pattern(scraper_common_config["title_required_words"])
-TITLE_EXCLUDED_WORDS_PATTERN = title_words_pattern(scraper_common_config["title_excluded_words"])
+TITLE_REQUIRED_WORDS_PATTERN = title_words_pattern(stage1_config["title_required_words"])
+TITLE_EXCLUDED_WORDS_PATTERN = title_words_pattern(stage1_config["title_excluded_words"])
 
 
 def has_required_title_word(title: str) -> bool:
@@ -185,8 +185,8 @@ def normalize_job_url(url: str) -> str:
 
 
 def load_embedding_model_and_keyword_embeddings():
-    model = SentenceTransformer(scraper_common_config["embedding_match_config"]["sentence_embedding_model"])
-    keyword_embeddings = compute_search_keywords_embeddings(model, scraper_common_config["match_keywords"])
+    model = SentenceTransformer(stage1_config["embedding_match_config"]["sentence_embedding_model"])
+    keyword_embeddings = compute_search_keywords_embeddings(model, stage1_config["match_keywords"])
     return model, keyword_embeddings
 
 

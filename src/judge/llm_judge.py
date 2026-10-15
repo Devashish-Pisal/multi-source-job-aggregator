@@ -14,15 +14,15 @@ from openai import OpenAI, APIConnectionError, APITimeoutError, AuthenticationEr
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from config.path_config import PROJECT_ROOT
-from config.scraper_common_config import scraper_common_config
-from config.stage2_config import stage2_config
+from config.common_config import common_config
+from config.stage3_config import stage3_config
 from utils.db import jobs_pending_judge, save_verdict
 from utils.throttle import delay_between_llm_calls
-from utils.search_area import outside_search_area
+from judge.search_area import outside_search_area
 
 RESPONSE_FORMAT_MODES = ("json_schema", "json_object", None)
 REQUEST_KEYS = ("temperature", "max_tokens", "response_format") # what per_model may override
-LOCATION_FILTER = "location filter" # judge_model of jobs outside stage2_config["search_area"]
+LOCATION_FILTER = "location filter" # judge_model of jobs outside stage3_config["search_area"]
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.S)
 CODE_FENCE_PATTERN = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.S)
@@ -150,7 +150,7 @@ def blank(model: type[BaseModel]) -> dict:
 
 
 def apply_verdict_rules(verdict: JobVerdict) -> dict:
-    rules = stage2_config["verdict"]
+    rules = stage3_config["verdict"]
     result = verdict.model_dump()
     cap = rules["max_fit_with_missing_must_haves"]
     if cap and len(result["missing_must_haves"]) >= cap["count"] and result["fit_score"] > cap["fit"]:
@@ -191,11 +191,11 @@ VERDICT_SCHEMA = strict_json_schema(JobVerdict)
 
 
 def request_settings(model: str) -> dict:
-    llm = stage2_config["llm"]
+    llm = stage3_config["llm"]
     override = llm["per_model"].get(model, {})
     unknown = set(override) - set(REQUEST_KEYS)
     if unknown:
-        raise ValueError(f"stage2_config['llm']['per_model']['{model}'] has unknown keys {sorted(unknown)}, allowed: {', '.join(REQUEST_KEYS)}")
+        raise ValueError(f"stage3_config['llm']['per_model']['{model}'] has unknown keys {sorted(unknown)}, allowed: {', '.join(REQUEST_KEYS)}")
     settings = {key: override.get(key, llm[key]) for key in REQUEST_KEYS}
     if settings["response_format"] not in RESPONSE_FORMAT_MODES:
         raise ValueError(f"response_format for '{model}' must be one of {RESPONSE_FORMAT_MODES}, not {settings['response_format']!r}")
@@ -214,21 +214,21 @@ def load_judges() -> list[dict]:
         missing = [name for name, value in zip(names, (base_url, api_key, models)) if not value]
         if missing:
             raise RuntimeError(f"{', '.join(missing)} not set in {PROJECT_ROOT / '.env'}")
-        client = OpenAI(base_url=base_url, api_key=api_key, timeout=stage2_config["llm"]["timeout_seconds"], max_retries=0) # we handle 429s ourselves
+        client = OpenAI(base_url=base_url, api_key=api_key, timeout=stage3_config["llm"]["timeout_seconds"], max_retries=0) # we handle 429s ourselves
         for model in filter(None, (name.strip() for name in models.split(","))):
             judges.append({"client": client, "model": model, "settings": request_settings(model), "provider": urlparse(base_url).netloc, "env": prefix + "*"})
     if not judges:
         raise RuntimeError(f"LLM_MODEL in {PROJECT_ROOT / '.env'} names no model")
-    unmatched = set(stage2_config["llm"]["per_model"]) - {judge["model"] for judge in judges}
+    unmatched = set(stage3_config["llm"]["per_model"]) - {judge["model"] for judge in judges}
     if unmatched:
-        logger.warning(f"[LLM Judge] stage2_config['llm']['per_model'] names models that are not in .env: {', '.join(sorted(unmatched))}")
+        logger.warning(f"[LLM Judge] stage3_config['llm']['per_model'] names models that are not in .env: {', '.join(sorted(unmatched))}")
     return judges
 
 
 def load_profile_text(config_key: str) -> str:
-    path = Path(stage2_config[config_key])
+    path = Path(stage3_config[config_key])
     if not path.is_file():
-        raise FileNotFoundError(f"{path} not found -- copy {path.with_name(path.stem + '.example.md')} to {path.name} and adapt it (path set by stage2_config['{config_key}'])")
+        raise FileNotFoundError(f"{path} not found -- copy {path.with_name(path.stem + '.example.md')} to {path.name} and adapt it (path set by stage3_config['{config_key}'])")
     text = path.read_text(encoding="utf-8").strip()
     if not text:
         raise ValueError(f"{path} is empty")
@@ -237,7 +237,7 @@ def load_profile_text(config_key: str) -> str:
 
 def build_messages(system_prompt: str, resume: str, job: dict, response_format: str | None) -> list[dict]:
     description = job["description"]
-    max_chars = stage2_config["max_description_chars"]
+    max_chars = stage3_config["max_description_chars"]
     if len(description) > max_chars:
         logger.warning(f"[LLM Judge] Description of {job['url']} has {len(description)} chars, cutting to {max_chars} before judging")
         description = description[:max_chars]
@@ -290,7 +290,7 @@ def judge_job(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
     if completion.usage:
         logger.debug(f"[LLM Judge] Tokens: prompt={completion.usage.prompt_tokens} completion={completion.usage.completion_tokens}")
     if choice.finish_reason == "length":
-        raise ValueError(f"response cut off at max_tokens={settings['max_tokens']} (raise it in stage2_config['llm'], or for this model in 'per_model')")
+        raise ValueError(f"response cut off at max_tokens={settings['max_tokens']} (raise it in stage3_config['llm'], or for this model in 'per_model')")
     return apply_verdict_rules(parse_verdict(choice.message.content or ""))
 
 
@@ -313,7 +313,7 @@ def rate_limit_wait(exc: RateLimitError) -> float | None:
 
 
 def judge_with_rate_limit_pauses(judge: dict, system_prompt: str, resume: str, job: dict) -> dict:
-    llm = stage2_config["llm"]
+    llm = stage3_config["llm"]
     reconnected = False
     for attempt in range(llm["rate_limit_retries"] + 1):
         try:
@@ -345,7 +345,7 @@ def next_judge(judges: list[dict], current: int, reason: str, detail: str, used_
 
 
 def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
-    llm = stage2_config["llm"]
+    llm = stage3_config["llm"]
     judged = []
     failed = 0
     stop_reason = None
@@ -357,7 +357,7 @@ def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
         logger.error(f"[LLM Judge] Skipping the judge pass: {exc}")
         return judged, failed, f"skipped: {exc}"
     pending = jobs_pending_judge()
-    overrides = {judge["model"]: "".join(f", {key} {value}" for key, value in stage2_config["llm"]["per_model"].get(judge["model"], {}).items()) for judge in judges}
+    overrides = {judge["model"]: "".join(f", {key} {value}" for key, value in stage3_config["llm"]["per_model"].get(judge["model"], {}).items()) for judge in judges}
     logger.info(f"[LLM Judge] {len(pending)} descriptions to judge; models in order: " + ", ".join(f"'{judge['model']}' ({judge['provider']}{overrides[judge['model']]})" for judge in judges))
     current = 0
     used_up = {}
@@ -401,9 +401,9 @@ def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
                 break
             if current == len(judges):
                 stop_reason = "every model is used up (" + "; ".join(f"{reason}: {', '.join(models)}" for reason, models in used_up.items()) + ")"
-                logger.error(f"[LLM Judge] Stopping the judge pass -- {stop_reason}. {len(pending) - len(judged)} jobs stay pending; run `python src/utils/llm_judge.py` once a limit resets.")
+                logger.error(f"[LLM Judge] Stopping the judge pass -- {stop_reason}. {len(pending) - len(judged)} jobs stay pending; run stage 3 again once a limit resets.")
                 break
-            delay_between_llm_calls(stage2_config)
+            delay_between_llm_calls(stage3_config)
         else:
             logger.info(f"[LLM Judge] Judge pass complete: {len(judged)} of {len(pending)} descriptions judged.")
     except KeyboardInterrupt:
@@ -414,5 +414,5 @@ def judge_pending_jobs() -> tuple[list[dict], int, str | None]:
 
 if __name__ == "__main__":
     logger.remove()
-    logger.add(sys.stderr, level=scraper_common_config["log_level"])
+    logger.add(sys.stderr, level=common_config["log_level"])
     judge_pending_jobs()

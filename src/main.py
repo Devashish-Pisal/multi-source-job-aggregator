@@ -8,7 +8,7 @@ import pandas as pd
 from loguru import logger
 
 from config.path_config import RAW_FOLDER_PATH, REJECTED_FOLDER_PATH, LOGS_FOLDER_PATH, DATABASE_FILE_PATH
-from config.scraper_common_config import scraper_common_config
+from config.common_config import common_config
 from sources.stepstone_scraper import StepstoneScraper
 from sources.indeed_scraper import IndeedScraper
 from sources.xing_scraper import XingScraper
@@ -17,7 +17,7 @@ from sources.linkedin_scraper import LinkedInScraper
 from utils.util import load_embedding_model_and_keyword_embeddings
 from utils.throttle import delay_between_sources
 from utils.db import init_db, upsert_stage1_jobs, jobs_pending_judge, db_summary
-from utils.llm_judge import judge_pending_jobs
+from judge.llm_judge import judge_pending_jobs
 
 SCRAPER_CLASSES = {
     "stepstone": StepstoneScraper,
@@ -35,7 +35,7 @@ TOP_N = 20
 
 
 def enabled_scrapers() -> dict:
-    return {name: scraper_class for name, scraper_class in SCRAPER_CLASSES.items() if scraper_common_config[f"use_{name}_scraper"]}
+    return {name: scraper_class for name, scraper_class in SCRAPER_CLASSES.items() if common_config[f"use_{name}_scraper"]}
 
 
 def save_csv(rows: list[dict], columns: list[str], folder: Path, filename: str) -> Path | None:
@@ -49,14 +49,17 @@ def save_csv(rows: list[dict], columns: list[str], folder: Path, filename: str) 
     return file_path
 
 
-def run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp: str, run: dict) -> list[dict]:
+def run_stage_1(run_timestamp: str, run: dict) -> None:
+    logger.info("[main] Stage 1: search pages")
+    embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
+    logger.info("[main] Embedding model loaded.")
     accepted_jobs = []
     for index, (name, scraper_class) in enumerate(enabled_scrapers().items()):
         scraper = scraper_class(embedding_model, keyword_embeddings)
         outcome = "completed"
         try:
             if index > 0:
-                delay_between_sources(scraper_common_config)
+                delay_between_sources(common_config)
             scraper.run_scraper()
         except KeyboardInterrupt:
             outcome = "interrupted"
@@ -72,7 +75,7 @@ def run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp: str, ru
                          save_csv(rejected, JOB_CSV_COLUMNS, REJECTED_FOLDER_PATH, f"{name}_rejected_{run_timestamp}.csv")]
         if outcome == "interrupted":
             break
-    return accepted_jobs
+    run["db"] = upsert_stage1_jobs(accepted_jobs)
 
 
 def description_csv_row(job: dict) -> dict:
@@ -82,13 +85,14 @@ def description_csv_row(job: dict) -> dict:
     return row
 
 
-def run_description_scrapers(run_timestamp: str, run: dict) -> None:
+def run_stage_2(run_timestamp: str, run: dict) -> None:
+    logger.info("[main] Stage 2: job pages")
     for index, (name, scraper_class) in enumerate(enabled_scrapers().items()):
         scraper = scraper_class()
         outcome = "completed"
         try:
             if index > 0:
-                delay_between_sources(scraper_common_config)
+                delay_between_sources(common_config)
             scraper.run_description_scraper()
         except KeyboardInterrupt:
             outcome = "interrupted"
@@ -101,6 +105,12 @@ def run_description_scrapers(run_timestamp: str, run: dict) -> None:
         run["files"].append(save_csv([description_csv_row(job) for job in jobs], DESCRIPTION_CSV_COLUMNS, RAW_FOLDER_PATH, f"{name}_descriptions_{run_timestamp}.csv"))
         if outcome == "interrupted":
             break
+
+
+def run_stage_3(run: dict) -> None:
+    logger.info("[main] Stage 3: llm judge")
+    judged, failed, stop_reason = judge_pending_jobs()
+    run["stage3"] = {"judged": judged, "failed": failed, "stop_reason": stop_reason, "awaiting": len(jobs_pending_judge())}
 
 
 def yield_by(entries: list[dict], field: str) -> list[tuple[str, int, int]]:
@@ -144,7 +154,7 @@ def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
     disabled = [name for name in SCRAPER_CLASSES if name not in enabled_scrapers()]
     if disabled:
         logger.info(f"Disabled sources: {', '.join(disabled)}")
-    if not scraper_common_config["run_stage_1"]:
+    if not common_config["run_stage_1"]:
         logger.info("Stage 1 | skipped (run_stage_1 is False)")
     for name, stats in run["stage1"].items():
         untitled = f" ({stats['untitled']} without a title)" if stats["untitled"] else ""
@@ -159,16 +169,18 @@ def log_run_summary(run: dict, run_timestamp: str, minutes: float) -> None:
             logger.info(f"Stage 1 | {field} yield (accepted jobs per site | total | found by no other {field}):")
             for line in yield_table(run["yield"], field):
                 logger.info(line)
-    if not scraper_common_config["run_stage_2"]:
+    if not common_config["run_stage_2"]:
         logger.info("Stage 2 | skipped (run_stage_2 is False)")
     for name, stats in run["stage2"].items():
         counts = ", ".join(f"{label} {stats['statuses'][status]}" for status, label in STAGE2_STATUS_LABELS.items() if stats["statuses"][status])
         logger.info(f"Stage 2 | {name:<13} | {stats['outcome']:<11} | {stats['visited']} detail pages{': ' + counts if counts else ''}")
-    if run["judge"]:
-        judge = run["judge"]
+    if not common_config["run_stage_3"]:
+        logger.info("Stage 3 | skipped (run_stage_3 is False)")
+    if run["stage3"]:
+        judge = run["stage3"]
         failed = f" ({judge['failed']} failed calls)" if judge["failed"] else ""
         stopped = f" -- stopped early: {judge['stop_reason']}" if judge["stop_reason"] else ""
-        logger.info(f"Judge   | {len(judge['judged'])} judged{per_model(dict(Counter(job['judge_model'] for job in judge['judged']).most_common()))}, {judge['awaiting']} awaiting a verdict{failed}{stopped}")
+        logger.info(f"Stage 3 | {len(judge['judged'])} judged{per_model(dict(Counter(job['judge_model'] for job in judge['judged']).most_common()))}, {judge['awaiting']} awaiting a verdict{failed}{stopped}")
         top = sorted(judge["judged"], key=lambda job: job["fit_score"], reverse=True)[:TOP_N]
         if top:
             logger.info(f"Top {len(top)} jobs judged in this run (fit | title | company | location | platform):")
@@ -200,25 +212,25 @@ def main():
     logger.remove()
     start = time.time()
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    logger.add(LOGS_FOLDER_PATH / "{time:YYYY-MM-DD_HH-mm-ss}.log", retention="15 day", level=scraper_common_config["log_level"]) # for file
-    logger.add(sys.stderr,level=scraper_common_config["log_level"]) # for console
-    run = {"stage1": {}, "yield": [], "db": None, "stage2": {}, "judge": None, "files": []}
+    logger.add(LOGS_FOLDER_PATH / "{time:YYYY-MM-DD_HH-mm-ss}.log", retention="15 day", level=common_config["log_level"]) # for file
+    logger.add(sys.stderr,level=common_config["log_level"]) # for console
+    run = {"stage1": {}, "yield": [], "db": None, "stage2": {}, "stage3": None, "files": []}
     try:
         init_db()
-        if scraper_common_config["run_stage_1"]:
-            embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
-            logger.info("[main] Embedding model loaded.")
-            accepted_jobs = run_all_scrapers(embedding_model, keyword_embeddings, run_timestamp, run)
-            run["db"] = upsert_stage1_jobs(accepted_jobs)
+        if common_config["run_stage_1"]:
+            run_stage_1(run_timestamp, run)
         else:
             logger.info("[main] Stage 1 skipped (run_stage_1 is False).")
 
-        if scraper_common_config["run_stage_2"]:
-            run_description_scrapers(run_timestamp, run)
-            judged, failed, stop_reason = judge_pending_jobs()
-            run["judge"] = {"judged": judged, "failed": failed, "stop_reason": stop_reason, "awaiting": len(jobs_pending_judge())}
+        if common_config["run_stage_2"]:
+            run_stage_2(run_timestamp, run)
         else:
             logger.info("[main] Stage 2 skipped (run_stage_2 is False).")
+
+        if common_config["run_stage_3"]:
+            run_stage_3(run)
+        else:
+            logger.info("[main] Stage 3 skipped (run_stage_3 is False).")
     finally:
         log_run_summary(run, run_timestamp, (time.time() - start) / 60)
         log_db_summary()

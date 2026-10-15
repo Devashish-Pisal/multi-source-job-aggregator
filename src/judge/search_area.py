@@ -4,7 +4,7 @@ from functools import cache
 from math import asin, cos, radians, sin, sqrt
 
 from config.path_config import PLACES_FILE_PATH
-from config.stage2_config import stage2_config
+from config.stage3_config import stage3_config
 from deduplication.normalize import normalize_location, FOLD
 
 REMOTE_PATTERN = re.compile(r"\b(?:remote|home office|homeoffice|home-office|mobile office|mobiles arbeiten|deutschlandweit|bundesweit)\b")
@@ -47,7 +47,7 @@ def place_distance(place: str, centre: tuple[float, float]) -> float | None:
 
 
 def outside_search_area(location: str | None) -> str | None:
-    area = stage2_config["search_area"]
+    area = stage3_config["search_area"]
     location = normalize_location(location)
     if not area or not location or REMOTE_PATTERN.search(location):
         return None

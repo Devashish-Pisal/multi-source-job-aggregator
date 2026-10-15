@@ -36,21 +36,21 @@ sss_config = {
         #"Viernheim": 10,
     },
     "job_age": 7, # 1, 7, 30; weekly runs 7, catch-up 30
-    "search_keywords": None, # None = the common list
+    "search_keywords": None, # None = the stage-1 list
     "between_queries": None, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": None, # no cookie banner
-    "search_page": {
+    "search_page": { # stage 1
         "results_container": "div[class*='results__jobs']",
         "cards_container": "div[class='c-job-cards']", # not visible = no results
         "cards": "div[class='c-job-card ']", # trailing space is real
         "title": "div[class*='c-job-card'] h4[class*='c-job-card__title']",
         "card_link": "a",
     },
-    "detail_page": {
+    "detail_page": { # stage 2
         "wait_for": "main",
         "description": ["[class*='job-description']", "[class*='c-job-detail']", "main"], # 'main' is the noisy last resort
         "company": ["[class*='c-job-detail__company']"],

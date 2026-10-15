@@ -30,7 +30,7 @@ linkedin_scraper_config = {
     },
     "job_age": "r604800", # r86400 = 1 day, r604800 = 7 (weekly), r1209600 = 14, r2592000 = 30
     # guests hit a sign-in wall quickly, so fewer and slower queries
-    "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent Automatisierung", "Werkstudent Data Science", "Praktikum Data Analytics", "Intern AI"], # None = the common list
+    "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent Automatisierung", "Werkstudent Data Science", "Praktikum Data Analytics", "Intern AI"], # None = the stage-1 list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
     "max_detail_pages": 20, # None = the stage-2 limit
     "between_detail_pages": {"min_seconds": 10.0, "max_seconds": 20.0}, # None = the stage-2 pace
@@ -38,12 +38,12 @@ linkedin_scraper_config = {
     # selectors
     "cookie_button": "button[action-type='DENY']", # reject button
     "modal_dismiss_button": "button.contextual-sign-in-modal__modal-dismiss:visible", # sign-in popup
-    "search_page": {
+    "search_page": { # stage 1
         "results_container": "ul.jobs-search__results-list",
         "cards": "ul.jobs-search__results-list div.base-search-card[data-entity-urn^='urn:li:jobPosting:']",
         "title": "h3.base-search-card__title",
     },
-    "detail_page": {
+    "detail_page": { # stage 2
         "wait_for": ".show-more-less-html__markup", # no JSON-LD on linkedin
         "description": [".show-more-less-html__markup"],
         "company": ["a.topcard__org-name-link", "span.topcard__flavor"],

@@ -39,20 +39,20 @@ indeed_scraper_config = {
     },
     "job_age": 7, # 1, 3, 7, 14; weekly runs 7, catch-up 14
     # indeed blocks fast runs, so fewer and slower queries
-    "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the common list
+    "search_keywords": ["Werkstudent Digitalisierung", "Werkstudent KI", "Werkstudent Data Science", "Werkstudent Data Analytics", "Intern AI"], # None = the stage-1 list
     "between_queries": {"min_seconds": 20.0, "max_seconds": 40.0}, # None = the common pace
     "max_detail_pages": None, # None = the stage-2 limit
     "between_detail_pages": None, # None = the stage-2 pace
 
     # selectors
     "cookie_button": "button[id='onetrust-reject-all-handler']", # reject-all button
-    "search_page": {
+    "search_page": { # stage 1
         "results_container": "div[class*='jobsearch-LeftPane']",
         "no_results": "div[class*='jobsearch-NoResult-messageContainer']",
         "cards": "#mosaic-provider-jobcards a[data-jk][id^='job_']", # organic results, ads are sj_...
         "title": "span[id^='jobTitle-']", # full title in its title attribute
     },
-    "detail_page": {
+    "detail_page": { # stage 2
         "wait_for": "[data-testid='viewjob-job-content']", # JSON-LD is waited for too
         "description": ["[data-testid='viewjob-job-content']", "#jobDescriptionText"], # first match wins
         "company": ["[data-testid='inlineHeader-companyName']", "[data-company-name='true']"],

@@ -9,7 +9,8 @@ from loguru import logger
 from playwright.sync_api import sync_playwright
 
 from config.stepstone_scraper_config import stepstone_scraper_config
-from config.scraper_common_config import scraper_common_config
+from config.common_config import common_config
+from config.stage1_config import stage1_config
 from config.stage2_config import stage2_config
 from utils.util import (
     compute_embedding,
@@ -40,7 +41,7 @@ class StepstoneScraper:
 
 
     def run_scraper(self):
-        if scraper_common_config["use_stepstone_scraper"]:
+        if common_config["use_stepstone_scraper"]:
             self.query_urls = self.build_query_urls()
             logger.info(f"[Stepstone Scraper] Stepstone scraper built {len(self.query_urls)} query combinations")
             self.query_matched_emb_accepted_jobs, self.query_matched_emb_rejected_jobs = self.extract_job_urls(self.query_urls)
@@ -50,7 +51,7 @@ class StepstoneScraper:
 
 
     def run_description_scraper(self):
-        if scraper_common_config["use_stepstone_scraper"]:
+        if common_config["use_stepstone_scraper"]:
             limit = stepstone_scraper_config["max_detail_pages"] or stage2_config["max_detail_pages_per_platform"]
             pending_jobs = jobs_pending_description("stepstone", limit)
             logger.info(f"[Stepstone Scraper] {len(pending_jobs)} job detail pages pending (at most {limit} per run)")
@@ -66,7 +67,7 @@ class StepstoneScraper:
     def build_query_urls() -> list[tuple[str, str, str]]:
         urls = []
         location_radius_pairs = stepstone_scraper_config["location_radius_pairs"]
-        keywords_list = stepstone_scraper_config["search_keywords"] or scraper_common_config["search_keywords"]
+        keywords_list = stepstone_scraper_config["search_keywords"] or stage1_config["search_keywords"]
         job_age = stepstone_scraper_config["job_age"]
         base_url = stepstone_scraper_config["BASE_URL"]
         for location, v in location_radius_pairs.items():
@@ -89,11 +90,11 @@ class StepstoneScraper:
         rejected_job_urls = set()
         accepted_jobs = []
         rejected_jobs = []
-        threshold = scraper_common_config["embedding_match_config"]["threshold"]
-        match_keywords = scraper_common_config["match_keywords"]
+        threshold = stage1_config["embedding_match_config"]["threshold"]
+        match_keywords = stage1_config["match_keywords"]
         search = stepstone_scraper_config["search_page"]
 
-        profile_path = Path(scraper_common_config["browser_profile_path"])
+        profile_path = Path(common_config["browser_profile_path"])
         profile_path.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as p:
             logger.info(f"[Stepstone Scraper] Starting browser session (profile: {profile_path})")
@@ -111,16 +112,16 @@ class StepstoneScraper:
                 page.set_default_timeout(15000)
                 page.on("pageerror", lambda exc: logger.debug(f"[Stepstone Scraper] [Page Error] {exc}"))
                 page.on("requestfailed", lambda req: logger.debug(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
-                max_failures = scraper_common_config["circuit_breaker"]["max_consecutive_failures"]
+                max_failures = common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
                 for index, (url, keyword, location) in enumerate(query_url_list):
                     query_accepted = []
                     try:
                         page.goto(url, wait_until="domcontentloaded")
-                        delay_after_page_load(scraper_common_config)
+                        delay_after_page_load(common_config)
                         page.wait_for_selector(search["results_container"], timeout=15000)
                         # TODO: add accept cookies logic
-                        random_scroll(page, scraper_common_config)
+                        random_scroll(page, common_config)
                         valid_hits = page.locator(search["hit_counter"])
                         number_of_valid_hits_displayed = int(valid_hits.get_attribute(search["hit_counter_attribute"])) # only collect urls of valid jobs (not recommendations) from page 1
                         if number_of_valid_hits_displayed == 0:
@@ -158,7 +159,7 @@ class StepstoneScraper:
                             why = f"block page detected: {block_reason}" if block_reason else f"{consecutive_failures} queries failed in a row with no block page detected, last error: {error}"
                             logger.error(f"[Stepstone Scraper] Circuit breaker tripped -- {why}. Aborting this scraper with {remaining} of {len(query_url_list)} queries unvisited so a blocking site is not hammered further; {len(accepted_jobs)} accepted / {len(rejected_jobs)} rejected jobs collected so far are kept. Current page URL: {page.url}")
                             break
-                    delay_between_queries(scraper_common_config, stepstone_scraper_config["between_queries"])
+                    delay_between_queries(common_config, stepstone_scraper_config["between_queries"])
                 else:
                     logger.info(f"[Stepstone Scraper] Browser session completed successfully, all {len(query_url_list)} queries visited.")
             finally:
@@ -174,7 +175,7 @@ class StepstoneScraper:
         detail = stepstone_scraper_config["detail_page"]
         cookie_button = stepstone_scraper_config["cookie_button"]
 
-        profile_path = Path(scraper_common_config["browser_profile_path"])
+        profile_path = Path(common_config["browser_profile_path"])
         profile_path.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as p:
             logger.info(f"[Stepstone Scraper] Starting browser session for {len(jobs)} job detail pages (profile: {profile_path})")
@@ -192,7 +193,7 @@ class StepstoneScraper:
                 page.set_default_timeout(15000)
                 page.on("pageerror", lambda exc: logger.debug(f"[Stepstone Scraper] [Page Error] {exc}"))
                 page.on("requestfailed", lambda req: logger.debug(f"[Stepstone Scraper] [Request Failed] {req.method} {req.url} ({req.failure})"))
-                max_failures = scraper_common_config["circuit_breaker"]["max_consecutive_failures"]
+                max_failures = common_config["circuit_breaker"]["max_consecutive_failures"]
                 consecutive_failures = 0
                 for index, job in enumerate(jobs):
                     url = job["url"]
@@ -206,11 +207,11 @@ class StepstoneScraper:
                             logger.warning(f"[Stepstone Scraper] Connection dropped ({str(exc).strip().splitlines()[0]}), pausing before one retry | URL: {url}")
                             delay_after_connection_error(stage2_config)
                             response = page.goto(url, wait_until="domcontentloaded")
-                        delay_after_page_load(scraper_common_config)
+                        delay_after_page_load(common_config)
                         if cookie_button:
                             accept_cookies = page.locator(cookie_button)
                             if accept_cookies.is_visible():
-                                delay_between_interactions(scraper_common_config)
+                                delay_between_interactions(common_config)
                                 accept_cookies.click() # accept cookies
                         expired_reason = detect_expired_page(page, response, STEPSTONE_EXPIRED_PATTERN)
                         if expired_reason:
@@ -219,7 +220,7 @@ class StepstoneScraper:
                             logger.info(f"[Stepstone Scraper] Job posting expired ({expired_reason}) | URL: {url}")
                         else:
                             page.wait_for_selector(f"{detail['wait_for']}, script[type='application/ld+json']", state="attached", timeout=15000)
-                            random_scroll(page, scraper_common_config)
+                            random_scroll(page, common_config)
                             fields = parse_job_posting_json_ld(page.content()) or {}
                             fields["description_source"] = "json_ld" if fields.get("description") else "css"
                             if not fields.get("description"):
@@ -258,7 +259,7 @@ class StepstoneScraper:
 
 if __name__=="__main__":
     logger.remove()
-    logger.add(sys.stderr, level=scraper_common_config["log_level"])
+    logger.add(sys.stderr, level=common_config["log_level"])
     embedding_model, keyword_embeddings = load_embedding_model_and_keyword_embeddings()
     stepstone_scraper = StepstoneScraper(embedding_model, keyword_embeddings)
     stepstone_scraper.run_scraper()
